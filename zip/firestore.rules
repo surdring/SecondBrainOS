@@ -1,0 +1,130 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId
+    // Fields:
+    //   - email: string (required)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: users/{userId}/memories
+    // Document ID: memoryId
+    // Fields:
+    //   - content: string (required, max 1000 chars)
+    //   - type: string (required, 'preference', 'fact', 'event')
+    //   - timestamp: timestamp (required)
+    //
+    // Collection: users/{userId}/conversations
+    // Document ID: conversationId
+    // Fields:
+    //   - title: string (required, max 200 chars)
+    //   - updatedAt: timestamp (required)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: users/{userId}/conversations/{conversationId}/messages
+    // Document ID: messageId
+    // Fields:
+    //   - role: string (required, 'user', 'assistant', 'system')
+    //   - content: string (required, max 10000 chars)
+    //   - timestamp: timestamp (required, immutable)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidString(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+             request.resource.data[field].size() >= minLen &&
+             request.resource.data[field].size() <= maxLen;
+    }
+
+    function isValidTimestamp(field) {
+      return request.resource.data[field] is timestamp;
+    }
+
+    function isImmutable(field) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field]);
+    }
+
+    // Domain Validators
+    function isValidUser() {
+      return hasOnlyAllowedFields(['email', 'createdAt']) &&
+             hasRequiredFields(['email', 'createdAt']) &&
+             isValidString('email', 3, 255) &&
+             isValidTimestamp('createdAt');
+    }
+
+    function isValidMemory() {
+      return hasOnlyAllowedFields(['content', 'type', 'timestamp']) &&
+             hasRequiredFields(['content', 'type', 'timestamp']) &&
+             isValidString('content', 1, 1000) &&
+             request.resource.data.type in ['preference', 'fact', 'event'] &&
+             isValidTimestamp('timestamp');
+    }
+
+    function isValidConversation() {
+      return hasOnlyAllowedFields(['title', 'updatedAt', 'createdAt']) &&
+             hasRequiredFields(['title', 'updatedAt', 'createdAt']) &&
+             isValidString('title', 1, 200) &&
+             isValidTimestamp('updatedAt') &&
+             isValidTimestamp('createdAt');
+    }
+
+    function isValidMessage() {
+      return hasOnlyAllowedFields(['role', 'content', 'timestamp']) &&
+             hasRequiredFields(['role', 'content', 'timestamp']) &&
+             request.resource.data.role in ['user', 'assistant', 'system'] &&
+             isValidString('content', 1, 10000) &&
+             isValidTimestamp('timestamp');
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser();
+      allow update: if isOwner(userId) && isValidUser() && isImmutable('createdAt');
+      allow delete: if isOwner(userId);
+
+      match /memories/{memoryId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidMemory();
+        allow update: if isOwner(userId) && isValidMemory();
+        allow delete: if isOwner(userId);
+      }
+
+      match /conversations/{conversationId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidConversation();
+        allow update: if isOwner(userId) && isValidConversation() && isImmutable('createdAt');
+        allow delete: if isOwner(userId);
+
+        match /messages/{messageId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && isValidMessage();
+          allow update: if isOwner(userId) && isValidMessage() && isImmutable('timestamp');
+          allow delete: if isOwner(userId);
+        }
+      }
+    }
+  }
+}

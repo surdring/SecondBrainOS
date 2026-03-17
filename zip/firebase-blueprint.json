@@ -1,0 +1,101 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the Second Brain OS.",
+      "type": "object",
+      "properties": {
+        "createdAt": {
+          "type": "timestamp",
+          "description": "When the user account was created."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User's email address."
+        }
+      },
+      "required": ["createdAt", "email"]
+    },
+    "Memory": {
+      "title": "Memory",
+      "description": "An extracted fact, preference, or event about the user (Agentic Memory).",
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "description": "The extracted memory content (e.g., 'User is allergic to peanuts')."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["preference", "fact", "event"],
+          "description": "The type of memory."
+        },
+        "timestamp": {
+          "type": "timestamp",
+          "description": "When the memory was recorded or updated."
+        }
+      },
+      "required": ["content", "type", "timestamp"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "A chat session between the user and the Second Brain OS.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Auto-generated title for the conversation."
+        },
+        "updatedAt": {
+          "type": "timestamp",
+          "description": "When the conversation was last updated."
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "When the conversation was created."
+        }
+      },
+      "required": ["title", "updatedAt", "createdAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A single message in a conversation.",
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["user", "assistant", "system"],
+          "description": "The role of the message sender."
+        },
+        "content": {
+          "type": "string",
+          "description": "The content of the message."
+        },
+        "timestamp": {
+          "type": "timestamp",
+          "description": "When the message was sent."
+        }
+      },
+      "required": ["role", "content", "timestamp"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles."
+    },
+    "users/{userId}/memories/{memoryId}": {
+      "schema": { "$ref": "#/entities/Memory" },
+      "description": "Extracted memories for the user."
+    },
+    "users/{userId}/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Conversations belonging to the user."
+    },
+    "users/{userId}/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Messages within a conversation."
+    }
+  }
+}
