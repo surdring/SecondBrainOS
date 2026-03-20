@@ -20,7 +20,7 @@ function AppContent() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setIsAuthReady(true);
-      
+
       // Create a default conversation ID for MVP
       if (currentUser && !conversationId) {
         setConversationId('default-chat');
@@ -35,7 +35,7 @@ function AppContent() {
     // Listen to Memories
     const memoriesRef = collection(db, `users/${user.uid}/memories`);
     const qMemories = query(memoriesRef, orderBy('timestamp', 'desc'));
-    
+
     const unsubMemories = onSnapshot(qMemories, (snapshot) => {
       const mems: Memory[] = [];
       snapshot.forEach((doc) => {
@@ -50,7 +50,7 @@ function AppContent() {
     if (conversationId) {
       const messagesRef = collection(db, `users/${user.uid}/conversations/${conversationId}/messages`);
       const qMessages = query(messagesRef, orderBy('timestamp', 'asc'));
-      
+
       const unsubMessages = onSnapshot(qMessages, (snapshot) => {
         const msgs: Message[] = [];
         snapshot.forEach((doc) => {
@@ -96,9 +96,9 @@ function AppContent() {
       // 4. Background: Extract Memories
       extractMemories(content, memories).then(async (operations) => {
         if (operations.length === 0) return;
-        
+
         const memoriesRef = collection(db, `users/${user.uid}/memories`);
-        
+
         for (const op of operations) {
           try {
             if (op.action === 'add' && op.content && op.type) {
@@ -170,10 +170,10 @@ function AppContent() {
   return (
     <div className="flex h-screen bg-white overflow-hidden">
       <Sidebar memories={memories} />
-      <Chat 
-        messages={messages} 
-        onSendMessage={handleSendMessage} 
-        isLoading={isLoading} 
+      <Chat
+        messages={messages}
+        onSendMessage={handleSendMessage}
+        isLoading={isLoading}
       />
     </div>
   );

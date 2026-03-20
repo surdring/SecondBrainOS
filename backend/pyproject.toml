@@ -1,0 +1,45 @@
+[project]
+name = "secondbrainos-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110.0,<0.111.0",
+  "uvicorn[standard]>=0.27.0,<0.28.0",
+  "pydantic>=2.6.0,<3.0.0",
+  "pydantic-settings>=2.2.0,<3.0.0",
+  "python-dotenv>=1.0.1,<2.0.0",
+  "redis>=5.0.0,<6.0.0",
+  "rq>=1.16.0,<2.0.0",
+  "psycopg[binary]>=3.1.18,<4.0.0",
+  "sqlalchemy>=2.0.0,<3.0.0",
+  "alembic>=1.13.0,<2.0.0",
+  "neo4j>=5.19.0,<6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0,<9.0.0",
+  "httpx>=0.27.0,<1.0.0",
+  "pre-commit>=3.7.0,<4.0.0",
+  "ruff>=0.5.0,<1.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sbo_core"]
+
+[tool.setuptools]
+packages = ["sbo_core"]

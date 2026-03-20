@@ -61,11 +61,11 @@ export function Chat({ messages, onSendMessage, isLoading }: ChatProps) {
               )}>
                 {msg.role === 'user' ? <User className="w-5 h-5 text-zinc-500" /> : <Bot className="w-5 h-5" />}
               </div>
-              
+
               <div className={cn(
                 "px-4 py-3 rounded-2xl max-w-[80%]",
-                msg.role === 'user' 
-                  ? "bg-zinc-100 text-zinc-800 rounded-tr-sm border border-zinc-200" 
+                msg.role === 'user'
+                  ? "bg-zinc-100 text-zinc-800 rounded-tr-sm border border-zinc-200"
                   : "bg-transparent text-zinc-800"
               )}>
                 {msg.role === 'assistant' ? (
@@ -75,7 +75,7 @@ export function Chat({ messages, onSendMessage, isLoading }: ChatProps) {
                 ) : (
                   <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
                 )}
-                
+
                 {msg.timestamp && (
                   <p className={cn(
                     "text-[10px] mt-2",
@@ -88,7 +88,7 @@ export function Chat({ messages, onSendMessage, isLoading }: ChatProps) {
             </div>
           ))
         )}
-        
+
         {isLoading && (
           <div className="flex gap-4 max-w-3xl mx-auto">
             <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">

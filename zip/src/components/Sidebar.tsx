@@ -36,7 +36,7 @@ export function Sidebar({ memories }: SidebarProps) {
         <h2 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-4">
           已提取的记忆 ({memories.length})
         </h2>
-        
+
         {memories.length === 0 ? (
           <div className="text-center py-8 text-zinc-500 text-sm">
             <Brain className="w-8 h-8 mx-auto mb-3 opacity-20" />
@@ -79,7 +79,7 @@ export function Sidebar({ memories }: SidebarProps) {
               <p className="text-xs text-zinc-500 truncate">{user?.email}</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={logout}
             className="p-2 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200 rounded-lg transition-colors"
             title="退出登录"

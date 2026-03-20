@@ -96,14 +96,18 @@ trigger: always
    - API 契约：`docs/contracts/api-and-events-draft.md`
 
 2. **Python 虚拟环境（强制）**
-   - **强制使用项目根目录的 `.venv`** 作为 Python 虚拟环境；禁止直接使用系统 Python 或用户全局 site-packages。
-   - 开发者本地创建（示例）：`python -m venv .venv`
-   - 激活方式（示例）：
+   - 推荐使用项目根目录的 `.venv` 作为默认虚拟环境（本仓库的验证命令示例也以 `.venv/bin/python` 为准）。
+   - 允许使用其它虚拟环境（例如开发者自定义 venv/conda），但必须满足：
+     - 禁止使用系统全局 Python 或用户全局 site-packages 直接运行；
+     - 运行 Python/pytest/脚本时，必须确保解释器与依赖来自同一个虚拟环境，且可复现（例如 `which python` 指向期望的 venv）。
+   - 创建（示例）：`python -m venv .venv`
+   - 激活（示例）：
      - Linux/macOS：`source .venv/bin/activate`
-   - **命令规范（强制）**：
-     - 运行 Python/pytest/脚本时必须确保解析到 `.venv` 中的解释器与依赖（例如 `which python` 指向 `.venv/bin/python`）。
-     - 安装依赖时必须使用 `.venv` 中的 `pip`（例如 `python -m pip ...` 且 `python` 来自 `.venv`）。
-   - **验证命令执行要求（强制）**：当你在 IDE/终端执行 `pytest`、`python -m compileall`、`backend/scripts/*.py` 等验证命令时，必须在 `.venv` 已激活或明确使用 `.venv/bin/python` 的前提下执行，以保证结果可复现。
+   - 安装后端依赖（示例，仓库根目录执行）：`.venv/bin/pip install -e "backend[dev]"`
+   - **验证命令执行要求（强制）**：在 IDE/终端执行 `pytest`、`python -m compileall`、`backend/scripts/*.py` 等验证命令时，必须在虚拟环境已激活或明确使用目标解释器（例如 `.venv/bin/python`）的前提下执行，以保证结果可复现。
+   - **路径约束（强制，避免误用）**：
+     - 在仓库根目录执行命令时使用：`.venv/bin/python ...`
+     - 在 `backend/` 目录执行命令时使用：`../.venv/bin/python ...`
 
 3. **工程结构（建议对齐仓库规范）**
    - 本仓库工程结构（以 SecondBrainOS 为准）：
@@ -123,14 +127,15 @@ trigger: always
    - 后端（`backend/`，Python/FastAPI + RQ）：
      - 优先运行任务内指定命令。
      - 若任务未指定：
-       - **最低限度校验**：`python -m compileall backend`
-       - **单元测试**：`pytest -q`（以 `backend/` 实际测试目录为准）
+       - **最低限度校验（仓库根目录执行）**：`.venv/bin/python -m compileall backend`
+       - **单元测试（在 backend/ 目录执行）**：`../.venv/bin/python -m pytest -q`
+         - 或（仓库根目录执行）：`.venv/bin/python -m pytest -q backend/tests`
        - **冒烟测试**：必须覆盖真实链路（Postgres + Redis + Neo4j + 外部 embeddings/LLM API），由 `backend/scripts/*_smoke_test.py` 或等价脚本承载。
    - 前端（`web/`，Vite/React/TS）：
      - 优先运行任务内指定命令；否则运行 `npm run build`（在 `web/` 目录）。
    - 原型前端（`zip/`）：
      - 仅用于 UI 参考；如需验证，运行 `npm run build`（在 `zip/` 目录）。
-   - 若对应目录未提供可运行脚本或依赖缺失，必须在验收日志中明确说明原因与补验收计划，**不得**直接标记完成。
+   - 若对应目录未提供可运行脚本或依赖缺失，必须在验收日志中明确说明原因与补验收计划，**不得直接标记完成**。
 
 5. **全局编码规范（强制）**
    - TypeScript Strict（**禁止 `any`**）

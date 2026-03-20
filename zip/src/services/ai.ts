@@ -105,7 +105,7 @@ ${memoryContext}
 
     const text = response.text;
     if (!text) return [];
-    
+
     const operations: MemoryOperation[] = JSON.parse(text);
     return operations;
   } catch (error) {

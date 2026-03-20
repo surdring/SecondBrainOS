@@ -23,7 +23,7 @@ share/python-wheels/
 MANIFEST
 
 # Virtual Environment
-.venv/
+# .venv/
 venv/
 ENV/
 env/
@@ -98,8 +98,8 @@ data/
 # PostgreSQL
 *.sql
 
-# Reports (keep structure but ignore generated files)
-reports/*.md
+# Reports
+!reports/**/*.md
 !reports/.gitkeep
 
 # Documentation build
