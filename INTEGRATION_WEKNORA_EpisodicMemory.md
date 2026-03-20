@@ -52,7 +52,7 @@
   - 哪些信息需要写入 Semantic（结构化）
   - 哪些内容适合写入 WeKnora（文档化/事件化归档）
   - 何时触发“摘要归档”（把多轮对话/事件压缩后入库）
-- 权限与隔离：多租户、组织共享边界、知识库级访问控制。
+- 权限与隔离：单机单用户形态不需要；如未来演进为多用户/多租户，再引入多租户、组织共享边界与知识库级访问控制。
 - 可观测性：请求追踪（Request-ID）、检索命中、生成质量指标。
 
 ---
@@ -60,6 +60,10 @@
 ## 3. 核心数据对象与映射
 
 > 这里不强制 WeKnora 内部表结构，仅规定 SBO 与 WeKnora 的“对接语义”。
+
+单机单用户形态说明：
+- `user_id` 在隔离意义上可以视为常量（可由后端默认补齐），主要用于审计、回放与未来演进一致性。
+- `agent_id` 表示入口/执行体（例如不同渠道 bot、不同自动化 agent），语义上不等同于 `user_id`。
 
 ### 3.1 SBO 内部对象（建议）
 
@@ -74,11 +78,12 @@
 - `Knowledge`：知识条目（文件、URL、在线录入等）。
 - `Chunk`：分块内容，承载检索最小单元。
 - `Tag`：标签，建议用于“业务域/项目/时间范围/密级/来源系统”。
-- （可选）`Organization/Tenant`：用于多租户/共享（以 WeKnora API 为准）。
+- （可选）`Organization/Tenant`：单机单用户形态不需要；如未来演进为多用户/多租户，用于多租户/共享（以 WeKnora API 为准）。
 
 ### 3.3 映射建议
 
-- 每个 SBO 租户/用户空间 -> WeKnora 一个 `Tenant/Organization`（若你启用 WeKnora 多租户能力）。
+- 单机单用户形态：可不启用 WeKnora 多租户能力；默认使用单一空间/知识库命名空间。
+- 如未来演进为多用户/多租户：每个 SBO 租户/用户空间 -> WeKnora 一个 `Tenant/Organization`（若你启用 WeKnora 多租户能力）。
 - 每个 SBO 业务域（如“项目A”“法律库”“运行日志”）-> WeKnora 一个 `KnowledgeBase`。
 - SBO 的 `EpisodicArtifact` -> WeKnora `Knowledge`（文档/URL/FAQ 条目）。
 
@@ -304,7 +309,7 @@ WeKnora 的默认向量检索仅考虑语义相关性，不考虑时间距离。
 - `WEKNORA_DEFAULT_KB_ID`（可选：默认知识库）
 - `WEKNORA_RETRIEVAL_TOP_K`
 - `WEKNORA_RETRIEVAL_THRESHOLD`（如果你在 SBO 侧做二次过滤）
-- `WEKNORA_TENANT_MODE`（single/tenant/org，按你的隔离方案）
+- `WEKNORA_TENANT_MODE`（single/tenant/org，单机单用户形态建议使用 single；多用户/多租户时按你的隔离方案启用）
 
 ---
 
@@ -312,7 +317,8 @@ WeKnora 的默认向量检索仅考虑语义相关性，不考虑时间距离。
 
 ### 8.1 隔离边界
 
-- 以“租户/组织 -> KnowledgeBase -> Tag”三层组合实现：
+- 单机单用户形态：不需要租户隔离；可直接以 KnowledgeBase + Tag 作为命名空间与范围控制。
+- 如未来演进为多用户/多租户：以“租户/组织 -> KnowledgeBase -> Tag”三层组合实现：
   - 租户级隔离：不同租户不共享 KnowledgeBase
   - 组织内共享：组织成员共享指定 KnowledgeBase
   - 细粒度范围：用 Tag 控制检索范围（项目/密级/时间等）
@@ -371,7 +377,7 @@ WeKnora 的默认向量检索仅考虑语义相关性，不考虑时间距离。
 
 ### 11.1 多租户隔离的复杂性
 
-**风险**：如果 SBO 是多用户版，务必确保在调用 WeKnora 检索时，`tenant_id` 是硬隔离的。
+**风险**：单机单用户形态不适用；如 SBO 未来演进为多用户/多租户，务必确保在调用 WeKnora 检索时，`tenant_id` 是硬隔离的。
 
 **建议**：
 - 在 WeKnora 中为每个租户创建独立的 `Organization` 或 `KnowledgeBase`
@@ -435,7 +441,8 @@ WeKnora 的默认向量检索仅考虑语义相关性，不考虑时间距离。
 
 ## 12. Checklist（落地前必过）
 
-- [ ] 已明确 SBO 的租户/组织模型如何映射到 WeKnora（Tenant/Organization/KB）
+- [ ] 单机单用户形态：已明确 WeKnora 的命名空间策略（KnowledgeBase/Tag）
+- [ ] 多用户/多租户形态（如适用）：已明确 SBO 的租户/组织模型如何映射到 WeKnora（Tenant/Organization/KB）
 - [ ] 已定义知识库命名规范与标签规范（项目/密级/来源/时间）
 - [ ] 已定义“何时检索、何时写入、何时归档摘要”的规则
 - [ ] 已定义引用输出格式（是否对用户展示 chunk/文档来源）
