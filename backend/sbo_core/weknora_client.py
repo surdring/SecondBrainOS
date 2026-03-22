@@ -25,6 +25,17 @@ class WeKnoraSearchResult:
     metadata: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class KnowledgeCreatePayload:
+    """创建 Knowledge 的载荷"""
+    title: str
+    content: str
+    tags: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    source_url: str | None = None
+    source_type: str | None = None
+
+
 class WeKnoraClient:
     def __init__(
         self,
@@ -219,6 +230,70 @@ class WeKnoraClient:
         async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             try:
                 resp = await client.post(url, headers=headers, json=payload)
+            except httpx.TimeoutException as e:
+                raise weknora_timeout_error({"request_id": rid}) from e
+            except httpx.RequestError as e:
+                raise weknora_unavailable_error({"request_id": rid, "error": str(e)}) from e
+
+        if resp.status_code in (401, 403):
+            raise weknora_auth_error({"request_id": rid, "status_code": resp.status_code})
+
+        if resp.status_code >= 500:
+            raise weknora_unavailable_error({"request_id": rid, "status_code": resp.status_code})
+
+        try:
+            data = resp.json()
+        except Exception as e:
+            raise WeKnoraError(
+                error_type="invalid_response",
+                message="WeKnora response is not valid JSON",
+                details={"request_id": rid, "status_code": resp.status_code},
+            ) from e
+
+        if not isinstance(data, dict) or data.get("success") is not True:
+            raise WeKnoraError(
+                error_type="invalid_response",
+                message="WeKnora response unexpected (expected success=true)",
+                details={"request_id": rid, "status_code": resp.status_code, "payload": data},
+            )
+
+        return data.get("data", {})
+
+    async def create_knowledge(
+        self,
+        *,
+        kb_id: str | None = None,
+        payload: KnowledgeCreatePayload,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """创建 Knowledge 条目"""
+        rid = request_id or str(uuid.uuid4())
+
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-API-Key": self._api_key,
+            "X-Request-ID": rid,
+        }
+
+        json_payload: dict[str, Any] = {
+            "title": payload.title,
+            "content": payload.content,
+        }
+        if payload.tags:
+            json_payload["tags"] = payload.tags
+        if payload.metadata:
+            json_payload["metadata"] = payload.metadata
+        if payload.source_url:
+            json_payload["source_url"] = payload.source_url
+        if payload.source_type:
+            json_payload["source_type"] = payload.source_type
+
+        url = f"{self._api_base}/knowledge-bases/{kb_id}/knowledge" if kb_id else f"{self._api_base}/knowledge"
+
+        async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
+            try:
+                resp = await client.post(url, headers=headers, json=json_payload)
             except httpx.TimeoutException as e:
                 raise weknora_timeout_error({"request_id": rid}) from e
             except httpx.RequestError as e:

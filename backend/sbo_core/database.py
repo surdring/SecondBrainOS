@@ -51,6 +51,21 @@ class ConsolidationJob(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class IngestionJob(Base):
+    """导入作业表 - 用于记录 WeKnora 导入等批量作业"""
+    __tablename__ = "ingestion_jobs"
+    
+    id = Column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    kb_id = Column(String(255), nullable=True, index=True)  # Knowledge Base ID
+    source_type = Column(String(50), nullable=False)  # conversation_summary, document, etc.
+    status = Column(String(20), nullable=False, default="queued")  # queued, running, succeeded, failed
+    total_items = Column(Integer, default=0)
+    processed_items = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class EvidenceFeedback(Base):
     __tablename__ = "evidence_feedback"
 

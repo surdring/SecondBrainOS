@@ -1,15 +1,40 @@
+"""
+Redis Queue (RQ) 集成模块
+
+提供与 tasks_framework 的向后兼容接口
+"""
+
 from __future__ import annotations
 
-from redis import Redis
-from rq import Queue
+# 从任务框架重新导出
+from sbo_core.tasks_framework import (
+    get_redis_connection as get_redis,
+    get_queue,
+    get_queue_by_priority,
+    get_all_queues,
+    enqueue_task,
+    TaskPriority,
+    TaskStatus,
+    QUEUE_DEFAULT,
+    QUEUE_HIGH,
+    QUEUE_LOW,
+    QUEUE_ARCHIVE,
+    QUEUE_LIFECYCLE,
+    QUEUE_RERANK,
+)
 
-from sbo_core.config import Settings
-
-
-def get_redis(settings: Settings) -> Redis:
-    return Redis.from_url(settings.redis_url)
-
-
-def get_queue(settings: Settings, name: str | None = None) -> Queue:
-    queue_name = name or settings.rq_queue_name
-    return Queue(queue_name, connection=get_redis(settings))
+__all__ = [
+    "get_redis",
+    "get_queue",
+    "get_queue_by_priority",
+    "get_all_queues",
+    "enqueue_task",
+    "TaskPriority",
+    "TaskStatus",
+    "QUEUE_DEFAULT",
+    "QUEUE_HIGH",
+    "QUEUE_LOW",
+    "QUEUE_ARCHIVE",
+    "QUEUE_LIFECYCLE",
+    "QUEUE_RERANK",
+]

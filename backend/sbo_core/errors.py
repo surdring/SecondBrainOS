@@ -74,6 +74,11 @@ class ErrorCode(str, Enum):
     PROFILE_UPDATE_FAILED = "profile_update_failed"
     PROFILE_NOT_FOUND = "profile_not_found"
     
+    # 巩固任务错误 (6100-6199)
+    CONSOLIDATION_FAILED = "consolidation_failed"
+    EVENT_NOT_FOUND = "event_not_found"
+    EXTRACTION_NOT_FOUND = "extraction_not_found"
+    
     # Episodic 管理错误 (7000-7999)
     KNOWLEDGE_BASE_FAILED = "knowledge_base_failed"
     KNOWLEDGE_BASE_NOT_FOUND = "knowledge_base_not_found"
