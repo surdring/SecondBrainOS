@@ -1,40 +1,118 @@
-### 3.5 embeddings 接入策略与失败策略
-#### 3.5.1 接入边界
-- embeddings 必须作为 SecondBrainOS Core 的内部能力，对调用方（Web App/
-OpenClaw）透明。
-- OpenClaw/前端不得直接持有 embeddings 的 API key。
-#### 3.5.2 失败策略（必须）
-- embedding 失败不得影响 `raw_events` 落库与其它抽取步骤的执行。
-- 系统必须支持对历史事件批量重跑 embedding（从 `raw_events` 回放），并可重试且
-可审计。
-### 3.6 数据模型
-#### 3.6.1 原始事件（Raw Events）
-- event_id：事件唯一标识
-- user_id：用户标识
-- source：来源渠道（telegram/webchat/whatsapp...）
-- content：原始内容
-- occurred_at：发生时间
-- created_at：创建时间
-- metadata：元数据
-- 作为事实源 append-only（支持软删字段），其余派生表/索引可重建
-#### 3.6.2 结构化记忆（Structured Memory）
-- memory_id：记忆唯一标识
-- type：记忆类型（preference/fact/event）
-- content：记忆内容
-- confidence：置信度
-- source_events：来源事件列表
-- created_at：创建时间
-- updated_at：更新时间
-#### 3.6.3 用户档案（User Profile）
-- user_id：用户标识
-- preferences：偏好信息
-- facts：事实信息
-- constraints：约束条件
-- version：版本号
-- updated_at：更新时间
-#### 3.6.4 前端状态模型
-- **Memory**：id、content、type（preference | fact | event）、timestamp
-- **Message**：id、role（user | assistant | system）、content、
-timestamp、evidence[]（可选）
-- **Evidence**：evidence_id、type（raw_event | profile_fact | 
-graph_fact）、text、occurred_at、source、confidence、refs
+- [ ] [P2] 4.2 事件巩固任务实现
+  - 实现 `consolidate_event(event_id)` 任务
+  - 实现结构化信息抽取
+  - 实现实体和关系识别
+  - _需求: 3.3.1, 3.4.1_
+- [ ] [P2] 4.3 事件巩固任务单元测试
+  - 测试信息抽取准确性
+  - 测试任务失败处理
+  - 测试重试机制
+- [ ] [P1] 4.4 用户档案更新任务
+  - 实现 `upsert_profile(extraction_id)` 任务
+  - 实现记忆冲突检测和解决
+  - 实现档案版本化管理
+  - _需求: 2.2.1, 3.4.1_
+- [ ] [P2] 4.5 档案更新任务单元测试
+  - 测试冲突检测逻辑
+  - 测试版本化机制
+  - 测试历史记录归档
+- [ ] [P1] 4.6 向量嵌入任务实现
+  - 实现 `embed_event(event_id)` 任务
+  - 集成 SiliconFlow embeddings API
+  - 实现失败不阻塞策略
+  - 支持批量重跑机制
+  - _需求: 3.5, 4.1.2_
+- [ ] [P2] 4.6.1 embeddings 回放重建与审计
+  - 提供从 `raw_events` 批量回放重跑 embeddings 的作业入口与脚本
+  - 记录每次回放的范围、结果与失败原因，确保可审计
+  - _需求: 3.5.2_
+- [ ] [P2] 4.7 向量嵌入任务单元测试
+  - 测试 embeddings API 集成
+  - 测试失败处理机制
+  - 测试批量重跑功能
+- [ ] [P1] 4.8 图谱更新任务实现
+  - 实现 `upsert_graph(extraction_id)` 任务
+  - 实现 Neo4j 节点和关系 MERGE
+  - 添加 source_event_id 和时间戳
+  - _需求: 3.3.1_
+- [ ] [P2] 4.9 图谱更新任务单元测试
+  - 测试图谱节点创建和更新
+  - 测试关系建立和维护
+  - 测试数据溯源机制
+### 5. 分层记忆架构实现
+- [ ] [P1] 5.1 工作记忆实现
+  - 实现 Context Window 管理
+  - 实现 Prompt Caching (CAG)
+  - 优化近期对话上下文存储
+  - _需求: 3.2.1_
+- [ ] [P2] 5.2 语义记忆实现
+  - 集成 Mem0 框架
+  - 实现用户事实和偏好存储
+  - 实现约束条件管理
+  - _需求: 3.2.2_
+- [ ] [P2] 5.3 语义记忆单元测试
+  - 测试 Mem0 集成
+  - 测试事实和偏好管理
+  - 测试约束条件验证
+- [ ] [P1] 5.4 情景记忆实现
+  - 对接 WeKnora：KnowledgeBase 管理、知识导入、混合检索（BM25 + Dense）
+  - Deep 模式下并发检索 Semantic Memory + WeKnora，并统一输出 evidence
+  - _需求: 3.2.3, 3.2.4_
+- [ ] [P2] 5.4.3 反馈纠错闭环（Episodic 证据自我修正）
+  - 提供 `POST /feedback`（或等价能力）记录用户对证据的 incorrect/outdated/incomplete 反馈
+  - 检索侧对已标记证据进行降权或过滤（行为必须一致且可测）
+  - `incorrect/outdated` 必须确定性地“降低权重或排除”二选一，并证明不会在证据链中高频重复出现
+  - _依赖: 3.4.2, 3.4.1_
+- [ ] [P2] 5.4.1 阶段性开关：MVP 不强依赖 deep 图谱
+  - 在配置层提供 `mode=deep` 可用性开关与依赖探测（Neo4j 不可用时明确降级）
+  - 保证 `mode=fast` 在仅 Postgres/Redis 可用时仍可工作
+  - _需求: 5.6_
+- [ ] [P1] 5.4.2 Episodic 写路径：文档/URL/对话摘要导入 WeKnora
+  - 创建/选择 KnowledgeBase
+  - 上传文件或提交 URL，并绑定 Tag（项目/来源/密级/时间戳）
+  - 记录导入作业状态（成功/失败/重试）并可观测
+  - _需求: 3.2.4_
+- [ ] [P2] 5.5 情景记忆集成测试
+  - 测试 WeKnora 文档导入（文件/URL/对话摘要）与作业状态可观测
+  - 测试 WeKnora 混合检索（BM25 + Dense）在 Deep 模式下可用，并返回可追溯引用
+  - 测试 Time-Decay Re-ranking（近期内容优先）
+  - （可选）启用 WeKnora GraphRAG profile 后的增强检索效果与性能
+### 6. 多模态输入处理
+- [ ] [P2] 6.1 语音输入处理
+  - 实现语音转录功能
+  - 集成语音识别 API
+  - 实现噪音环境优化
+  - _需求: 2.1.1_
+- [ ] [P2] 6.2 图片输入处理
+  - 实现 OCR 文字提取
+  - 实现图片信息抽取
+  - 支持多种图片格式
+  - _需求: 2.1.2_
+- [ ] [P2] 6.3 多模态输入单元测试
+  - 测试语音转录准确性
+  - 测试 OCR 识别准确性
+  - 测试图片信息抽取
+- [ ] [P2] 6.4 多模态能力分阶段落地
+  - MVP 阶段明确：`POST /upload` 可先实现文件落库 + 异步 OCR/抽取入队（不阻塞快确认）
+  - 阶段 2 再补齐 Vision/OCR 质量指标与结构化抽取覆盖
+  - _需求: 7.1, 7.2_
+### 7. 前端开发
+- [ ] [P2] 7.1 前端项目初始化
+  - 创建 Vite + React + TypeScript 项目
+  - 配置 Tailwind CSS
+  - 从 zip/ 原型迁移 UI 组件
+  - _需求: 4.1.3_
+- [ ] [P2] 7.2 核心组件开发
+  - 迁移和优化 Chat.tsx 组件
+  - 迁移和优化 Sidebar.tsx 组件
+  - 迁移和优化 ErrorBoundary.tsx 组件
+  - _需求: 4.1.3_
+- [ ] [P2] 7.3 前端组件单元测试
+  - 测试 Chat 组件交互
+  - 测试 Sidebar 组件功能
+  - 测试错误边界处理
+- [ ] [P2] 7.4 API 客户端实现
+  - 实现统一 API 客户端
+  - 配置鉴权和错误处理
+  - 实现重试和超时机制
+  - _需求: 4.1.3_

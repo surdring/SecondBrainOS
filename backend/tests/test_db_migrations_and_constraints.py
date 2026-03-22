@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import uuid
 
 import psycopg
@@ -47,8 +48,12 @@ def temp_schema(env_base: None, monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 def _alembic_cfg() -> Config:
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("script_location", "alembic")
+    backend_dir = pathlib.Path(__file__).resolve().parents[1]
+    alembic_ini = backend_dir / "alembic.ini"
+    alembic_dir = backend_dir / "alembic"
+
+    cfg = Config(str(alembic_ini))
+    cfg.set_main_option("script_location", str(alembic_dir))
     return cfg
 
 

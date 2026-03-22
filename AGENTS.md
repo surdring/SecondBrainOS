@@ -17,9 +17,7 @@ trigger: always
 - **强制：文档生成后的任务提示词同步**（验收日志/审查报告除外）：
   - 触发条件：当 AI 编码助手新增或更新**非日志类文档**（例如 `docs/` 下的 API 文档、契约、规范、设计说明等）。
   - 排除范围：`reports/` 下的验收日志（`reports/YYYY-MM-DD_T{N}_*.md`）与代码审查报告（`*-review.md`）不触发该规则。
-  - 强制动作：必须同步更新**后续相关任务**的提示词文件 `docs/task-prompts/*.md`：
 
-    - 在提示词中新增或更新“权威参考文档/约束来源”段落，明确引用新文档路径（例如：`docs/api/semantic-api.md`、`docs/contracts/api-and-events-draft.md`）。
     - 若提示词包含实现要求/验收标准/错误码/请求头/隔离规则等内容，必须显式声明以这些文档为准，避免后续任务出现契约漂移。
     - 同步完成后，需在对应任务的 `# Checklist` 中勾选“文档引用已同步/Doc References Updated”（若该项存在；不存在则新增该项并勾选）。
 
@@ -30,7 +28,12 @@ trigger: always
   - 提示用户可以直接复制内容到文件中
 
 ## 3) 任务状态标记
-- 任务**只有在自动化验证通过后**方可标记完成（避免“文档已完成但代码不可运行”）：
+- **强制：每次完成开发任务后必须更新任务状态**：
+  - 每当完成 `.kiro/specs/second-brain-os/tasks.md` 中的任何任务后，**必须**立即将对应的任务条目从 `- [ ]` 更新为 `- [x]`
+  - 使用 `todo_list` 工具同步更新任务状态，确保任务管理系统与文档保持一致
+  - 完成多个相关任务时，必须逐一标记每个任务为完成状态
+
+- 任务**只有在自动化验证通过后**方可标记完成（避免"文档已完成但代码不可运行"）：
   - 优先运行任务说明中指定的验证命令；若未指定，则运行仓库默认验证命令（按变更范围选择后端/前端）。
   - 若变更范围仅影响某个子目录（例如仅 `web/` 或仅 `backend/`），应在对应目录执行其脚本，并在验收日志中写明命令与结果。
   - 若因环境/依赖缺失导致无法运行验证，必须在任务条目中记录原因与补验收计划，**不得直接标记完成**。
@@ -45,8 +48,8 @@ trigger: always
     - **跨模块/涉及权限/审计/证据链/写操作治理**：单元测试 ≥ 10；冒烟测试 ≥ 3（覆盖关键门禁点与回归点）。
   - **验收日志必须记录**：两类测试的命令、关键输出与结论（pass/fail），以及所覆盖的关键链路/边界点摘要。
 - 标记动作：
-  - `docs/tasks.md`：将对应任务条目从 `- [ ]` 更新为 `- [x]`。
-  - `docs/task-prompts/*.md`：同步更新对应 Prompt 的 `# Checklist`（例如 `[x]`）。
+  - `.kiro/specs/second-brain-os/tasks.md`：将对应任务条目从 `- [ ]` 更新为 `- [x]`。
+ 
 - 完成每个任务后，必须在 `reports/` 目录中生成该任务的验收日志。
   - **验收日志命名**：`reports/YYYY-MM-DD_T{N}_short-slug.md`（例如 `reports/2025-12-22_T6_streaming-core.md`）
   - **代码审查报告命名**：`reports/YYYY-MM-DD_T{N}_short-slug-review.md`（例如 `reports/2025-12-24_T13_export-markdown-review.md`）
@@ -67,7 +70,6 @@ trigger: always
     - 不得以"后续优化"、"推迟到下个版本"等理由搪塞
   - **文档完整性要求**：
     - API 文档必须包含所有端点的完整说明（参数、返回值、所有可能的错误码）
-    - 错误码必须在 `docs/contracts/api-and-events-draft.md` 中完整枚举
     - 配置项必须在 `.env.example` 中完整列出并在文档中说明用途、默认值、获取方式
     - 所有对外契约必须有对应的 schema 定义（前端 Zod / 后端 Pydantic）
   - **迁移可回滚性验证**（如适用）：
@@ -89,11 +91,10 @@ trigger: always
 ## 4) SecondBrainOS 工程约定（约定）
 
 1. **文档权威来源**
-   - 需求与架构（权威）：`sbo.md`（SecondBrainOS 需求与架构文档）
-   - 需求（PRD）：`docs/requirements.md`
-   - 任务（Implementation Plan）：`docs/tasks.md`
-   - 设计：`docs/design.md`
-   - API 契约：`docs/contracts/api-and-events-draft.md`
+   - 需求与架构（权威）：`.kiro/specs/second-brain-os/requirements.md`（SecondBrainOS 需求文档）
+   - 设计（技术架构）：`.kiro/specs/second-brain-os/design.md`（SecondBrainOS 技术设计文档）
+   - 任务（Implementation Plan）：`.kiro/specs/second-brain-os/tasks.md`（SecondBrainOS 实施任务列表）
+
 
 2. **Python 虚拟环境（强制）**
    - 推荐使用项目根目录的 `.venv` 作为默认虚拟环境（本仓库的验证命令示例也以 `.venv/bin/python` 为准）。
@@ -112,16 +113,15 @@ trigger: always
 3. **工程结构（建议对齐仓库规范）**
    - 本仓库工程结构（以 SecondBrainOS 为准）：
      - `zip/`：前端原型（参考实现，不作为正式发布入口）
-     - `backend/`：SecondBrainOS Core（FastAPI 后端 + RQ worker；Postgres(pgvector) + Neo4j + Redis）
+     - `backend/`：SecondBrainOS Core（FastAPI 后端 + RQ worker；Postgres(pgvector) + Redis + 可选 Neo4j）
      - `web/`：SecondBrainOS 独立应用前端（Vite + React + TypeScript + Tailwind；从 `zip/` 迁移复用 UI）
-     - `docs/`：文档体系（PRD/设计/任务拆解/契约/验收）
+     - `.kiro/specs/second-brain-os/`：权威文档体系（需求/设计/任务拆解）
      - `reports/`：验收日志与审查报告
-     - `sbo.md`：SecondBrainOS 需求与架构权威文档
    - 约定：
      - `zip/` 仅作为原型参考；实现应落在 `backend/` 与 `web/`。
      - OpenClaw 为可选集成入口，不作为 SecondBrainOS Core 的运行时依赖。
      - `raw_events` 作为事实源 append-only（支持软删字段），其余派生表/索引可重建。
-     - Neo4j 图谱可从 raw_events + extractions 重建（将图谱视为派生物）。
+     - WeKnora 作为 Episodic Memory 的检索与理解层；Neo4j 图谱可选（通过 WeKnora GraphRAG 或独立启用）。
 
 4. **默认验证命令（若任务未单独指定）**
    - 后端（`backend/`，Python/FastAPI + RQ）：
@@ -130,7 +130,7 @@ trigger: always
        - **最低限度校验（仓库根目录执行）**：`.venv/bin/python -m compileall backend`
        - **单元测试（在 backend/ 目录执行）**：`../.venv/bin/python -m pytest -q`
          - 或（仓库根目录执行）：`.venv/bin/python -m pytest -q backend/tests`
-       - **冒烟测试**：必须覆盖真实链路（Postgres + Redis + Neo4j + 外部 embeddings/LLM API），由 `backend/scripts/*_smoke_test.py` 或等价脚本承载。
+       - **冒烟测试**：必须覆盖真实链路（Postgres + Redis + 外部 embeddings/LLM API；可选 WeKnora/Neo4j），由 `backend/scripts/*_smoke_test.py` 或等价脚本承载。
    - 前端（`web/`，Vite/React/TS）：
      - 优先运行任务内指定命令；否则运行 `npm run build`（在 `web/` 目录）。
    - 原型前端（`zip/`）：
@@ -147,17 +147,17 @@ trigger: always
 
 6. **自动化验收原则（强制）**
    - 每个任务的 Verification 优先写成**可自动化断言**（单元/集成/契约测试），避免仅“手工目测”。
-   - 契约相关（REST/SSE/Events/Streaming/Citation/Error）以本仓库 `docs/` 下的权威设计文档为准，并使用 schema 做断言（前端 Zod / 后端 Pydantic）。
+   - 契约相关（REST/API/Events/Error）以本仓库 `.kiro/specs/second-brain-os/` 下的权威设计文档为准，并使用 schema 做断言（前端 Zod / 后端 Pydantic）。
 
 7. **真实集成原则（强制）**
    - **所有代码必须使用真实服务进行集成和测试**
-   - **所有测试必须针对真实服务运行**（如 RAGFlow、数据库、外部 API）
+   - **所有测试必须针对真实服务运行**（如 WeKnora、数据库、外部 API）
    - **禁止使用 mock**：不得使用 mock 对象、mock 服务、stub 等模拟真实服务的方式进行测试
    - **单元测试例外**：仅在单元测试中，为了隔离被测试单元，可以通过依赖注入传入测试专用的实现（如 fake fetch），但必须模拟真实行为和错误场景
    - 测试环境通过环境变量配置真实服务地址
    - **严格的失败策略**：当真实服务不可用或缺少配置时，测试必须失败并记录原因
      - **禁止 skip 策略**：不得使用 `test.skip()`、`describe.skip()`、条件跳过等任何形式的测试跳过
-     - **配置缺失 => 测试失败**：按照本仓库 `docs/` 规范，缺少必需配置时测试必须抛出清晰错误并失败
+     - **配置缺失 => 测试失败**：按照本仓库 `.kiro/specs/second-brain-os/` 规范，缺少必需配置时测试必须抛出清晰错误并失败
      - **服务不可用 => 测试失败**：真实服务连接失败时测试必须失败，不得绕过或降级
      - **环境问题必须解决**：测试失败时必须修复环境配置或服务可用性，而非跳过测试
    - 集成测试必须验证完整的端到端流程
@@ -165,11 +165,11 @@ trigger: always
  8. **配置化开发原则（强制）**
    - **所有配置必须外部化**：URL、端口、超时时间、重试次数、API 密钥等配置项必须通过环境变量或配置文件管理
    - **禁止硬编码配置值**：代码中不得出现硬编码的 URL（如 `http://localhost:9999`）、端口号、超时时间、魔法数字等配置值
-   - **使用统一的配置加载机制**：所有模块必须通过统一的配置加载函数（如 `loadRagflowConfig()`）获取配置，确保配置来源一致
-   - **配置必须有 Zod 校验**：所有配置项必须定义 Zod schema 并在加载时校验，确保类型安全和完整性
+   - **使用统一的配置加载机制**：所有模块必须通过统一的配置加载函数获取配置，确保配置来源一致
+   - **配置必须有校验**：所有配置项必须定义 schema 并在加载时校验，确保类型安全和完整性（后端 Pydantic / 前端 Zod）
    - **本地开发 `.env.local`（强制）**：
      - 配置读取优先级必须为：**进程环境变量** > **仓库根目录 `.env.local`**。
-     - 运行时不得通过交互式提问来获取关键配置；关键配置缺失必须直接失败，并给出清晰的英文错误消息（例如缺少 `GANGQING_DATABASE_URL`）。
+     - 运行时不得通过交互式提问来获取关键配置；关键配置缺失必须直接失败，并给出清晰的英文错误消息（例如缺少 `DATABASE_URL`）。
      - `.env.local` 仅用于本地开发与测试，不得提交到仓库；`.env.example` 必须完整列举所有必需与可选配置项。
    - **配置缺失时的处理**：
      - 开发/测试阶段：当检测到配置文件（`.env.local`）缺少必需的配置项时，AI 必须主动询问用户并协助补充配置
@@ -187,29 +187,34 @@ trigger: always
    - **SecondBrainOS Core**：FastAPI + Redis Queue（RQ worker）
    - **存储层**：
      - Postgres（含 pgvector）：存储原始文本、系统元数据、状态/事实（JSONB + pgvector）
-     - Neo4j：构建实体联系图谱（以 user_id 形成 Sub-graph）
      - Redis：缓存 + 队列
+     - Neo4j：可选图谱增强（仅在启用 WeKnora GraphRAG 或阶段 2 时需要）
    - **大模型驱动层**：
-     - 日常对话与路由：DeepSeek V3 / Llama-3（快速低成本）
-     - 记忆归档与复杂推理：DeepSeek R1 / Claude 3.5 Sonnet / GPT-4o
+     - 本地推理（llama.cpp）：DeepSeek V3 / Llama-3（快速低成本，用于日常对话与路由）
+     - 外部 PROVIDER：DeepSeek R1 / Claude 3.5 Sonnet / GPT-4o（复杂推理，用于记忆归档与复杂推理）
    - **分层记忆框架**：
      - Agentic Memory：Mem0（专为 LLM 设计的自适应记忆层）
-     - 知识图谱：Graphiti 或 LlamaIndex Property Graph
+     - Episodic Memory：WeKnora（文档解析/分块/索引/混合检索/可选 GraphRAG 增强）
    - **embeddings**：硅基流动（SiliconFlow）API
    - **OpenClaw**：可选集成入口（多渠道/会话/工具编排），SecondBrainOS 必须可独立运行
 
 2. **分层记忆架构（强制）**
    - **工作记忆（Working Memory）**：Context Window + Prompt Caching (CAG)，存储最近 1-7 天的对话上下文，极速响应
    - **语义记忆（Semantic/Agentic Memory）**：Redis / PostgreSQL，基于 Mem0 架构，存储用户的核心事实、状态、偏好
-   - **情景记忆（Episodic Memory）**：GraphRAG (Neo4j) + Vector DB (pgvector)，海量日志、历史文档、会议记录，以"知识图谱 + 向量"混合存储
+   - **情景记忆（Episodic Memory）**：以 WeKnora 作为"检索与理解层"（文档解析/分块/索引/混合检索/可选 GraphRAG 增强）
 
-3. **OpenClaw 集成边界（强制）**
-   - 禁止将核心记忆逻辑（抽取/冲突解决/回放/擦除权/图谱写入）放入 OpenClaw 内部实现。
-   - OpenClaw 仅通过 skills/tools 调用 SecondBrainOS Core 的 HTTP API。
-   - OpenClaw 不可用时，SecondBrainOS 仍需可独立使用（Web App + API）。
-   - SecondBrainOS 不可用时，OpenClaw 仍应保持其原有能力可用（但 SecondBrainOS 相关功能会失败）。
+3. **WeKnora 集成约束（强制）**
+   - WeKnora 为权威 Episodic Memory 检索与理解层：SBO 不在 Core 内重复实现文档解析/分块/混合检索
+   - `mode=fast` 不得依赖 WeKnora；`mode=deep` 必须固定为"失败返回结构化错误"或"降级为 fast 并显式标记降级原因"二选一
+   - `/episodic/*`（KB 管理、导入、状态查询）与 `/feedback`：不允许静默成功；失败必须返回结构化错误并落审计日志
 
-4. **API 契约（最小 API 契约）**
+4. **OpenClaw 集成边界（强制）**
+   - 禁止将核心记忆逻辑（抽取/冲突解决/回放/擦除权/图谱写入）放入 OpenClaw 内部实现
+   - OpenClaw 仅通过 skills/tools 调用 SecondBrainOS Core 的 HTTP API
+   - OpenClaw 不可用时，SecondBrainOS 仍需可独立使用（Web App + API）
+   - SecondBrainOS 不可用时，OpenClaw 仍应保持其原有能力可用（但 SecondBrainOS 相关功能会失败）
+
+5. **API 契约（最小 API 契约）**
    - **`POST /ingest`**：写入原始事件 + 入队
      - 入参：`source`、`source_message_id`、`occurred_at`、`content`、`tags`（可选）、`idempotency_key`（可选）
      - 出参：`event_id`、`queued_jobs`
@@ -219,19 +224,25 @@ trigger: always
    - **`POST /forget`**：擦除权（异步）
      - 入参：按 `time_range` / `tags` / `event_ids`
      - 出参：`erase_job_id`（可查询状态）
-   - **`GET /health`**：健康检查（检查 Postgres/Redis/Neo4j 连通性、队列积压）
+   - **`GET /health`**：健康检查（检查 Postgres/Redis 连通性、队列积压；可选 Neo4j）
+   - **WeKnora 集成 API**：
+     - `POST /episodic/knowledge-bases`：创建 KnowledgeBase（WeKnora）
+     - `GET /episodic/knowledge-bases`：列出 KnowledgeBase（WeKnora）
+     - `POST /episodic/ingestions`：导入文档/URL/对话摘要到 WeKnora（异步作业）
+     - `GET /episodic/ingestions/{ingestion_job_id}`：导入作业状态查询
+     - `POST /feedback`：反馈纠错（支持关联 WeKnora chunk/knowledge 引用）
    - **前端专用 API**：
      - `GET /memories`：拉取已巩固的记忆（供 Sidebar 展示）
      - `GET /conversations/{id}/messages`：拉取消息列表
      - `POST /chat`：发送用户消息并获得 assistant 回复 + `evidence[]`
 
-5. **异步巩固任务拆分（Redis Queue / RQ）**
+6. **异步巩固任务拆分（Redis Queue / RQ）**
    - `consolidate_event(event_id)`：抽取结构化信息（实体/关系/偏好变化/待办等），写入 `extractions`
    - `upsert_profile(extraction_id)`：冲突解决 + 版本化（current + history）
    - `embed_event(event_id)`：生成 embedding 写入 pgvector
-   - `upsert_graph(extraction_id)`：Neo4j MERGE 节点/关系（带 `source_event_id` 与时间戳）
+   - `upsert_graph(extraction_id)`：Neo4j MERGE 节点/关系（带 `source_event_id` 与时间戳）（可选，仅在启用图谱增强时）
 
-6. **前端技术栈与状态模型**
+7. **前端技术栈与状态模型**
    - **技术栈**：Vite + React + TypeScript + Tailwind
    - **状态模型**：
      - **Memory**：`id`、`content`、`type`（preference | fact | event）、`timestamp`
@@ -240,32 +251,32 @@ trigger: always
    - **API Client**：前端只调用 SecondBrainOS Core API，避免把业务逻辑散落在组件中
    - **证据展示 UI**：默认折叠，展开后按 `type` 分组展示（profile_fact、raw_event、graph_fact）
 
-7. **自动召回护栏**
+8. **自动召回护栏**
    - **阈值**：按 `confidence` 过滤低质量证据；默认只注入 top-N（如 3~8 条）
    - **缓存**：同一会话/相近 query 在短窗口内复用召回结果
    - **失败降级**：SecondBrainOS 不可用时，OpenClaw 直接正常聊天
-   - **分档策略**：`mode=fast` 用 pgvector + 时间优先规则；`mode=deep` 才做图谱扩展与更昂贵的推理
+   - **分档策略**：`mode=fast` 用 pgvector + 时间优先规则；`mode=deep` 才做 WeKnora 检索与更昂贵的推理
 
-8. **性能指标（强制）**
+9. **性能指标（强制）**
    - 文本响应时间：< 1.5 秒
    - 记忆入库延迟：异步处理，后台入库不超过 10 秒
    - 高频上下文缓存命中率：期望达到 80% 以上（利用长上下文 CAG 技术）
 
-9. **鉴权与 Token（单用户场景）**
-   - OpenClaw -> SecondBrainOS：允许复用 `OPENCLAW_GATEWAY_TOKEN` 作为 Bearer token（`Authorization: Bearer ...`）
-   - Web 前端 -> SecondBrainOS：建议使用独立的登录/会话机制，与 OpenClaw token 分离
+10. **鉴权与 Token（单用户场景）**
+    - OpenClaw -> SecondBrainOS：允许复用 `OPENCLAW_GATEWAY_TOKEN` 作为 Bearer token（`Authorization: Bearer ...`）
+    - Web 前端 -> SecondBrainOS：建议使用独立的登录/会话机制，与 OpenClaw token 分离
 
-10. **关键配置项（必须外部化并在 `.env.example` 完整列出）**
-    - Postgres：`DATABASE_URL`
-    - Redis：`REDIS_URL`
-    - Neo4j：`NEO4J_URI`、`NEO4J_USER`、`NEO4J_PASSWORD`
-    - SiliconFlow：`SILICONFLOW_API_KEY`、`SILICONFLOW_BASE_URL`（如适用）、`SILICONFLOW_EMBEDDING_MODEL`
-    - OpenClaw（可选）：`OPENCLAW_GATEWAY_TOKEN`
+11. **关键配置项（必须外部化并在 `.env.example` 完整列出）**
+    - **基础存储**：`DATABASE_URL`、`REDIS_URL`
+    - **WeKnora（Episodic Memory）**：`WEKNORA_BASE_URL`、`WEKNORA_API_KEY`、`WEKNORA_REQUEST_TIMEOUT_MS`、`WEKNORA_RETRIEVAL_TOP_K`、`WEKNORA_TIME_DECAY_RATE`、`WEKNORA_SEMANTIC_WEIGHT`、`WEKNORA_TIME_WEIGHT`
+    - **Neo4j（可选）**：`NEO4J_URI`、`NEO4J_USER`、`NEO4J_PASSWORD`
+    - **SiliconFlow**：`SILICONFLOW_API_KEY`、`SILICONFLOW_BASE_URL`、`SILICONFLOW_EMBEDDING_MODEL`
     - **LLM（本地 llama.cpp）**：`LLM_LLAMA_BASE_URL`、`LLM_LLAMA_API_KEY`、`LLM_LLAMA_MODEL_ID`
     - **LLM（外部 PROVIDER）**：`PROVIDER_API_KEY`、`PROVIDER_BASE_URL`、`PROVIDER_MODEL_ID`
+    - **OpenClaw（可选）**：`OPENCLAW_GATEWAY_TOKEN`
 
-11. **演进路线图（分阶段落地）**
-    - **第一阶段：MVP（约 4 周）**：基础输入、Agentic 状态记忆和对话；暂不引入 GraphRAG；后端仅使用 PostgreSQL（文本 + JSONB + pgvector）
-    - **第二阶段：完整形态（约 6-8 周）**：引入 Neo4j 和 GraphRAG 流程，解决复杂事件关联记忆；实现图片识别输入
+12. **演进路线图（分阶段落地）**
+    - **第一阶段：MVP（约 4 周）**：基础输入、Agentic 状态记忆和对话；WeKnora 作为可选 deep 检索；后端主要使用 PostgreSQL（文本 + JSONB + pgvector）
+    - **第二阶段：完整形态（约 6-8 周）**：引入 Neo4j 图谱扩展（通过 WeKnora GraphRAG 或独立），解决复杂事件关联记忆；实现图片识别输入
     - **第三阶段：全知数字伴侣（长期）**：后台常驻定时触发 Agent；结合日历、GPS、健康数据主动推送提醒和建议
 

@@ -15,9 +15,17 @@
 - embeddings/LLM 密钥仅允许在 Core/worker 持有，前端/OpenClaw 不得直接持有。
 - 测试必须使用真实服务（Postgres/Redis/外部 embeddings/LLM；可选 Neo4j/GraphRAG 仅在启用 deep/图谱增强时）；配置缺失必须导致测试失败，不得跳过。
 - Episodic Memory 通过 WeKnora 集成：SBO 不在 Core 内重复实现文档解析/分块/混合检索；Deep 检索通过 WeKnora 完成并返回可追溯 evidence。
-- `mode=fast` 不得依赖 WeKnora；`mode=deep` 必须固定为“失败返回结构化错误”或“降级为 fast 并显式标记降级原因”二选一，并将字段结构契约化。
+- `mode=fast` 不得依赖 WeKnora；`mode=deep` 必须固定为"失败返回结构化错误"或"降级为 fast 并显式标记降级原因"二选一，并将字段结构契约化。
 - `/episodic/*`（KB 管理、导入、状态查询）与 `/feedback`：不允许静默成功；失败必须返回结构化错误并落审计日志。
 - 租户隔离：本项目为非 SaaS/单机单用户形态时不需要。
+- 检索排序管线约束：必须实现候选召回、融合、可选 rerank、归一化过滤、时间重排、噪声过滤的完整管线。
+- 可用性约束：任何上游不可用时必须降级回 Semantic/Working Memory；hardMinScore 必须在 time-decay 之前执行。
+- 召回护栏约束：mustSkipRetrieval 判定必须先于 WeKnora 调用；支持 CJK 特性和可配置规则。
+- Evidence 统一元数据约束：所有 evidence 必须携带标识、隔离、时间、质量、审计字段。
+- Scope/Namespace 隔离约束：scope 过滤必须在检索/融合之前执行；支持 global/user/agent/project/custom 形态。
+- Prompt 注入安全约束：evidence 注入时必须标记为 [UNTRUSTED DATA]；必须有数量上限和阈值控制。
+- Cross-Encoder 重排约束：必须有独立超时控制；失败必须降级到 fusion；不得完全覆盖原始相关性。
+- 生命周期/衰减约束：阶段 1 仅 time-decay；访问计数更新必须异步；不得破坏 raw_events 可回放原则。
 
 ### B. 每个任务的完成定义（DoD）
 
@@ -143,7 +151,7 @@
 
 ### 3. 核心 API 开发
 
-- [ ] [P0] 3.1 FastAPI 应用框架
+- [x] [P0] 3.1 FastAPI 应用框架
   - 创建 FastAPI 应用实例
   - 配置 CORS 和中间件
   - 实现统一错误处理
@@ -151,41 +159,71 @@
   - （可选）请求追踪：如实现 `X-Request-ID` 透传/生成，应保证端到端一致与可观测
   - _需求: 3.1_
 
-- [ ] [P1] 3.1.1 结构化错误码与响应契约
+- [x] [P1] 3.1.1 结构化错误码与响应契约
   - 定义全局错误码枚举与错误响应模型（`code/message`）
   - 为每个端点明确可能错误码（参数校验/鉴权失败/上游不可用/超时/依赖不可用）
   - _需求: 5.5, 6.4_
 
-- [ ] [P1] 3.1.2 外部依赖失败/降级策略契约化（统一门禁）
+- [x] [P1] 3.1.2 外部依赖失败/降级策略契约化（统一门禁）
   - 固化 `mode=deep` 对 WeKnora 不可用/超时/鉴权失败时的策略（二选一：失败/降级）并形成响应字段契约
   - `mode=fast` 明确禁止调用 WeKnora（实现与测试双门禁）
   - _依赖: 3.1.1_
 
-- [ ] [P0] 3.2 数据录入接口实现
-  - 实现 `POST /ingest` 接口
-  - 实现 `POST /chat` 接口
-  - 实现 `POST /upload` 接口
+- [x] [P0] 3.2 数据录入接口实现
+  - 实现 `POST /ingest` 接口基础框架
+  - 实现 `POST /chat` 接口基础框架
+  - 实现 `POST /upload` 接口基础框架
   - 添加幂等性支持
   - _需求: 3.1.1, 2.1.1, 2.1.2_
 
-- [ ] [P1] 3.2.1 写入“快确认”与异步入队的硬性门禁
+- [x] [P1] 3.2.1 数据录入接口业务逻辑实现
+  - 实现数据录入的完整业务流程
+  - 实现文件上传的处理逻辑
+  - 实现对话交互的处理逻辑
+  - _依赖: 3.2_
+
+- [x] [P1] 3.2.2 写入"快确认"与异步入队的硬性门禁
   - 明确 `POST /ingest` 与 `POST /chat` 必须先落 `raw_events` 再入队、再返回
   - 证明不会被抽取/embedding/图谱写入阻塞（与性能指标对齐）
   - _需求: 3.4.1, 5.1_
 
-- [ ] [P2] 3.3 数据录入接口单元测试
+- [x] [P2] 3.3 数据录入接口单元测试
   - 测试输入验证和错误处理
   - 测试幂等性机制
   - 测试异步任务入队
 
-- [ ] [P0] 3.4 查询检索接口实现
+- [x] [P0] 3.4 查询检索接口实现
   - 实现 `POST /query` 接口
   - 实现多路召回机制（fast/deep 模式）
   - 实现 `GET /memories` 接口
   - 实现 `GET /conversations/{id}/messages` 接口
   - _需求: 3.1.2, 2.3.1_
 
-- [ ] [P0] 3.4.2 WeKnora Episodic 检索对接（Deep Mode）
+- [x] [P1] 3.4.3 检索排序管线实现（统一抽象，agent-agnostic）
+  - 实现候选召回（可并行）：Semantic + Episodic + （可选）Graph
+  - 实现融合（fusion）：dense 为主，lexical/BM25 保底
+  - 实现可选 rerank（cross-encoder）：失败必须降级到 fusion 结果
+  - 实现归一化与过滤：length normalization + hardMinScore
+  - 实现时间与生命周期重排：time-decay / recency boost
+  - 实现噪声过滤与多样性：noise filter + MMR diversity
+  - _需求: 3.1.2, 设计文档检索排序管线_
+
+- [x] [P1] 3.4.4 查询可用性与顺序约束实现
+  - 实现任何上游不可用时的降级策略（至少走 Semantic/Working Memory 回退路径）
+  - 确保 hardMinScore 发生在 time-decay/lifecycle 之前
+  - 实现符号型查询保底策略（对高置信 lexical 命中设置 preservation floor）
+  - 确保 evidence[] 携带关键评分信息（final_score；推荐 dense/bm25/rerank_score）
+  - _需求: 3.1.2, 设计文档可用性约束_
+
+- [x] [P1] 3.4.5 shouldSkipRetrieval 召回护栏实现
+  - 实现护栏判定逻辑（先于 WeKnora 调用）
+  - 配置跳过 Deep Retrieval 的典型输入（问候语/寒暄/简单确认/emoji/命令）
+  - 配置强制 Deep Retrieval 的典型输入（记得/之前/上次/回顾/根据文档/查历史等）
+  - 实现 CJK 特性（中文短 query 独立策略）
+  - 实现可配置规则（阈值、关键词列表、最短长度）
+  - _需求: 5.6, 设计文档召回护栏_
+
+- [x] [P0] 3.4.2 WeKnora Episodic 检索对接（Deep Mode）
   - 实现 WeKnora HTTP client（超时/重试/错误映射）
   - 实现按 KnowledgeBase/Tag 的范围检索策略（项目/密级/时间）
   - Deep 模式必须并发检索 Semantic Memory + WeKnora，并统一输出 evidence
@@ -193,54 +231,80 @@
   - 对 WeKnora 失败执行统一策略（失败或降级），并确保可观测（响应字段 + 结构化日志）
   - _需求: 3.2.4, 6.4.2_
 
-- [ ] [P1] 3.4.1 Evidence 证据模型与护栏实现
+- [x] [P1] 3.4.1 Evidence 证据模型与护栏实现
   - 明确定义 `evidence[]` 字段：`evidence_id/type/text/occurred_at/source/confidence/refs`
   - 实现阈值过滤（按 `confidence`）与 top-N 裁剪（建议 3~8）
   - 实现短窗口缓存复用（同会话/相近 query）
   - _需求: 5.6, 3.4.2_
 
-- [ ] [P2] 3.5 查询检索接口单元测试
+- [x] [P2] 3.5 查询检索接口单元测试
   - 测试查询参数验证
   - 测试证据召回和排序
   - 测试时间范围过滤
 
-- [ ] [P1] 3.6 管理接口实现
+- [x] [P1] 3.6 管理接口实现
   - 实现 `POST /forget` 接口
   - 实现 `GET /forget/{erase_job_id}` 接口
   - 实现 `GET /profile` 和 `PUT /profile` 接口
   - 实现 `GET /health` 接口
   - _需求: 3.1.3, 2.2.1, 5.1_
 
-- [ ] [P1] 3.6.2 结构化审计日志（范围对齐设计约束）
+- [x] [P1] 3.6.2 结构化审计日志（范围对齐设计约束）
   - `POST /forget` 与擦除作业执行：记录影响范围摘要
   - `PUT /profile`：记录变更摘要与触发来源
   - `POST /feedback`：记录 evidence 标识、反馈类型与可选 session_id（若有）
   - 对外部依赖（WeKnora/embeddings/LLM provider）调用结果：成功/失败/降级
+  - 检索与重排审计：记录 rerank 执行状态、provider/model/version、降级原因
+  - Prompt 注入安全审计：记录不可信数据标记和注入数量
   - _依赖: 3.1, 3.1.1_
 
-- [ ] [P1] 3.6.3 Episodic 管理接口（WeKnora 透传/编排）
+- [x] [P1] 3.6.3 Episodic 管理接口（WeKnora 透传/编排）
   - 实现 `POST /episodic/knowledge-bases` / `GET /episodic/knowledge-bases`
   - 实现 `POST /episodic/ingestions` / `GET /episodic/ingestions/{ingestion_job_id}`（异步导入 + 状态可观测）
   - 失败不得静默成功；必须返回结构化错误并落审计日志
   - _依赖: 1.5.1, 3.1.1_
 
-- [ ] [P2] 3.6.1 /health 指标化输出与告警友好结构
+- [x] [P1] 3.6.4 反馈纠错接口实现
+  - 实现 `POST /feedback` 接口（支持关联 WeKnora chunk/knowledge 引用）
+  - 支持反馈类型：incorrect/outdated/incomplete
+  - 支持可选用户纠正文本（user_correction）
+  - 记录审计字段（时间、evidence 标识、session_id、来源）
+  - 实现影响策略（对 incorrect/outdated 证据降权或过滤）
+  - 外部依赖失败时返回结构化错误（不得静默成功）
+  - _需求: 2.2.3, 设计文档反馈纠错_
+
+- [x] [P2] 3.6.1 /health 指标化输出与告警友好结构
   - 返回 Postgres/Redis/Neo4j 连通性
   - 返回队列积压（长度/延迟）等可用于告警的指标级信息
   - _需求: 5.3.1_
 
-- [ ] [P2] 3.7 管理接口单元测试
+- [x] [P2] 3.7 管理接口单元测试
   - 测试记忆擦除功能
   - 测试用户档案管理
   - 测试健康检查机制
 
 ### 4. 异步任务处理
 
-- [ ] [P0] 4.1 Redis Queue 工作框架
+- [ ] [P1] 4.1 Redis Queue 工作框架
   - 配置 RQ worker 和队列管理
   - 实现任务失败重试机制
   - 添加任务监控和日志
   - _需求: 3.3.1_
+
+- [ ] [P1] 4.1.2 Cross-Encoder 重排任务实现
+  - 实现 rerank 任务（独立超时与并发控制）
+  - 确保重排失败时降级回 fusion 排序
+  - 记录降级原因（timeout/5xx）到审计日志
+  - 实现混合评分（rerank 分数加权融合，不完全覆盖原始相关性）
+  - 实现符号查询保护（对高 BM25/lexical 命中设置保底阈值）
+  - _需求: 设计文档 Cross-Encoder 重排策略_
+
+- [x] [P1] 4.1.3 生命周期/衰减任务实现
+  - 阶段 1：实现 time-decay re-ranking（简单、可解释）
+  - 实现访问计数/最后访问时间的异步更新（避免热路径延迟）
+  - 确保生命周期字段不破坏 raw_events 可回放原则
+  - 为阶段 2（access_count/last_accessed_at 强化衰减）预留接口
+  - _需求: 设计文档生命周期/衰减约束_
 
 - [ ] [P1] 4.1.1 对话归档（摘要）写入 WeKnora（异步）
   - 定义归档触发条件（会话结束/阈值/关键事件等）
@@ -393,18 +457,38 @@
   - 配置鉴权和错误处理
   - 实现重试和超时机制
   - _需求: 4.1.3_
-
-- [ ] [P2] 7.5 状态管理实现
+- [ ] [P2] 7.5 前端状态管理实现
   - 实现 Memory、Message、Evidence 状态模型
   - 配置 Zod 数据验证
   - 实现状态持久化
   - _需求: 3.6.4_
 
+- [ ] [P2] 5.5.1 Evidence 统一元数据模型实现
+  - 实现标识字段：evidence_id、type、refs
+  - 实现隔离字段：user_id、project_id、scope（global/user/agent/project/custom）
+  - 实现时间字段：occurred_at（优先）、created_at（次之）
+  - 实现质量字段：confidence、scores（dense/bm25/rerank/final）
+  - 实现审计字段：request_id、retrieval_trace（可选）
+  - _需求: 3.6.4, 设计文档 Evidence 统一元数据规范_
+
+- [ ] [P2] 5.5.2 Scope/Namespace 隔离实现
+  - 实现统一 scope 形态（global、user:<user_id>、agent:<agent_id>、project:<project_id>、custom:<name>）
+  - 实现硬隔离（scope 过滤在检索/融合之前执行）
+  - 确保所有 evidence 携带 user_id/project_id 与 scope
+  - 实现二次校验（多用户/多租户形态的外部系统结果校验）
+  - _需求: 5.2, 设计文档 Scope/Namespace 隔离模型_
+
+- [ ] [P2] 5.5.3 Prompt 注入安全实现
+  - 实现不可信数据标记（[UNTRUSTED DATA]）
+  - 实现注入数量控制（top-N 上限与阈值过滤）
+  - 实现可配置的注入规则
+  - _需求: 5.2, 设计文档 Prompt 注入安全约束_
+
 - [ ] [P2] 7.5.1 前端契约与错误处理一致性
   - 以 Zod 定义所有 API 响应/错误响应 schema，并从 schema 推导类型
   - 统一展示 evidence（时间/来源/置信度/引用跳转）
   - _需求: 3.6.4, 5.5_
-
+  
 - [ ] [P2] 7.6 前端集成测试
   - 测试 API 客户端集成
   - 测试状态管理功能
@@ -558,10 +642,15 @@
   - 提供使用示例
   - _需求: 5.5_
 
-- [ ] 14.1.1 环境变量与配置校验文档
+- [ ] [P2] 14.1.1 环境变量与配置校验文档
   - 列出最低环境变量集（LLM/Provider/Embeddings/DB/Redis/Neo4j）与用途
   - 必须包含 WeKnora 环境变量最低集与用途（`WEKNORA_BASE_URL`/`WEKNORA_API_KEY`/`WEKNORA_REQUEST_TIMEOUT_MS`/`WEKNORA_RETRIEVAL_TOP_K`/`WEKNORA_TIME_DECAY_RATE`/`WEKNORA_SEMANTIC_WEIGHT`/`WEKNORA_TIME_WEIGHT` 等）
-  - 明确“缺少配置 -> 测试失败”的策略
+  - 明确"缺少配置 -> 测试失败"的策略
+  - 检索排序管线配置：RETRIEVAL_TOP_K、HARD_MIN_SCORE、TIME_DECAY_RATE、SEMANTIC_WEIGHT、TIME_WEIGHT、NOISE_FILTER_THRESHOLD、MMR_DIVERSITY_THRESHOLD
+  - 召回护栏配置：SKIP_RETRIEVAL_MIN_LENGTH、SKIP_RETRIEVAL_KEYWORDS、FORCE_RETRIEVAL_KEYWORDS、CJK_MIN_LENGTH_THRESHOLD
+  - Cross-Encoder 配置：RERANK_PROVIDER_URL、RERANK_API_KEY、RERANK_MODEL、RERANK_TIMEOUT_MS、RERANK_WEIGHT、LEXICAL_PRESERVATION_FLOOR
+  - Prompt 注入安全配置：EVIDENCE_INJECTION上限、EVIDENCE_CONFIDENCE_THRESHOLD、UNTRUSTED_DATA_MARKER
+  - Scope/Namespace 配置：DEFAULT_SCOPE、ENABLE_MULTI_TENANT、SCOPE_ISOLATION_STRICT_MODE
   - _需求: 6.4.1_
 
 - [ ] 14.2 部署文档编写
