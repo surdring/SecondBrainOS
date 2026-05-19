@@ -13,7 +13,8 @@ from __future__ import annotations
 import functools
 import logging
 import traceback
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import Any, Callable, TypeVar
 
@@ -239,6 +240,14 @@ def task_wrapper(
                 
                 duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
                 
+                # 记录成功指标
+                TaskMonitor.record_task_metric(
+                    task_name=f.__name__,
+                    duration_ms=duration_ms,
+                    success=True,
+                    queue_name=getattr(job, "queue", "unknown"),
+                )
+                
                 _logger.info(
                     f"Task completed: {f.__name__} (job_id={job_id}, duration={duration_ms}ms)"
                 )
@@ -260,22 +269,65 @@ def task_wrapper(
                 error_msg = str(e)
                 tb = traceback.format_exc()
                 
-                _logger.error(
-                    f"Task failed: {f.__name__} (job_id={job_id}, duration={duration_ms}ms, error={error_msg})"
+                # 记录失败指标
+                TaskMonitor.record_task_metric(
+                    task_name=f.__name__,
+                    duration_ms=duration_ms,
+                    success=False,
+                    queue_name=getattr(job, "queue", "unknown"),
                 )
                 
+                # 获取重试信息
+                retry_count = 0
+                max_retries = max_retries
+                will_retry = False
+                
+                if job:
+                    # 使用 RQ 的 meta 字段显式记录当前尝试次数
+                    job_meta = job.meta or {}
+                    current_attempt = job_meta.get("current_attempt", 1)
+                    retry_count = getattr(job, "retries_left", 0)
+                    # RQ 的 retries_left 表示剩余重试次数
+                    will_retry = retry_count > 0
+                    
+                    # 更新 meta 中的尝试次数
+                    if will_retry:
+                        job.meta["current_attempt"] = current_attempt + 1
+                        job.save_meta()
+                else:
+                    current_attempt = 1
+                
+                _logger.error(
+                    f"Task failed: {f.__name__} (job_id={job_id}, duration={duration_ms}ms, "
+                    f"attempt={current_attempt}/{max_retries}, will_retry={will_retry}, error={error_msg})"
+                )
+                
+                # 增强的审计日志 - 包含重试信息
                 audit_log(
-                    event="task.fail",
+                    event="task.fail" if not will_retry else "task.retry",
                     outcome="fail",
                     details={
                         "job_id": job_id,
                         "function": f.__name__,
                         "duration_ms": duration_ms,
                         "error": error_msg,
+                        "error_type": type(e).__name__,
                         "traceback": tb,
-                        "retry_count": getattr(job, "retry_count", 0) if job else 0,
+                        "retry_info": {
+                            "current_attempt": current_attempt,
+                            "max_retries": max_retries,
+                            "retries_left": retry_count,
+                            "will_retry": will_retry,
+                        },
                     }
                 )
+                
+                # 如果即将重试，记录重试事件
+                if will_retry:
+                    _logger.info(
+                        f"Task will retry: {f.__name__} (job_id={job_id}, "
+                        f"attempt={current_attempt}/{max_retries}, retries_left={retry_count})"
+                    )
                 
                 # 重新抛出异常以触发 RQ 重试机制
                 raise
@@ -340,23 +392,222 @@ def update_consolidation_job_status(
 
 
 class TaskMonitor:
-    """任务监控器"""
+    """任务监控器 - 补充执行时长、成功率、队列积压等关键指标"""
+    
+    _metrics_key_prefix = "sbo:metrics:"
+    _metrics_ttl = 86400 * 7  # 7天
+    
+    @staticmethod
+    def _get_redis() -> Redis:
+        """获取 Redis 连接"""
+        return get_redis_connection()
+    
+    @classmethod
+    def record_task_metric(
+        cls,
+        task_name: str,
+        duration_ms: int,
+        success: bool,
+        queue_name: str = "unknown",
+    ) -> None:
+        """记录任务执行指标到 Redis
+        
+        Args:
+            task_name: 任务名称
+            duration_ms: 执行时长（毫秒）
+            success: 是否成功
+            queue_name: 队列名称
+        """
+        try:
+            redis = cls._get_redis()
+            timestamp = datetime.now(timezone.utc).isoformat()
+            
+            # 按小时聚合的指标
+            hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
+            metric_key = f"{cls._metrics_key_prefix}{task_name}:{hour_key}"
+            
+            # 使用 Redis hash 存储聚合指标
+            pipeline = redis.pipeline()
+            
+            # 总执行次数
+            pipeline.hincrby(metric_key, "total", 1)
+            # 成功次数
+            if success:
+                pipeline.hincrby(metric_key, "success", 1)
+            # 失败次数
+            else:
+                pipeline.hincrby(metric_key, "failed", 1)
+            
+            # 执行时长统计
+            pipeline.hincrby(metric_key, "duration_total_ms", duration_ms)
+            
+            # 记录队列信息
+            pipeline.hset(metric_key, "queue", queue_name)
+            pipeline.hset(metric_key, "last_updated", timestamp)
+            
+            # 设置过期时间
+            pipeline.expire(metric_key, cls._metrics_ttl)
+            
+            pipeline.execute()
+            
+        except Exception as e:
+            _logger.warning(f"Failed to record task metric: {e}")
+    
+    @classmethod
+    def get_task_metrics(
+        cls,
+        task_name: str | None = None,
+        hours: int = 24,
+    ) -> dict[str, Any]:
+        """获取任务执行指标
+        
+        Args:
+            task_name: 任务名称，None 表示所有任务
+            hours: 查询最近多少小时
+            
+        Returns:
+            指标字典
+        """
+        try:
+            redis = cls._get_redis()
+            now = datetime.now(timezone.utc)
+            
+            # 构建要查询的 key 列表
+            keys = []
+            for i in range(hours):
+                hour = now - timedelta(hours=i)
+                hour_key = hour.strftime("%Y-%m-%d-%H")
+                if task_name:
+                    keys.append(f"{cls._metrics_key_prefix}{task_name}:{hour_key}")
+                else:
+                    # 获取所有任务类型的 key
+                    pattern = f"{cls._metrics_key_prefix}*:{hour_key}"
+                    keys.extend(redis.keys(pattern))
+            
+            # 去重
+            keys = list(set(keys))
+            
+            # 聚合指标
+            total_tasks = 0
+            success_tasks = 0
+            failed_tasks = 0
+            total_duration_ms = 0
+            task_breakdown: dict[str, dict[str, Any]] = {}
+            
+            for key in keys:
+                data = redis.hgetall(key)
+                if not data:
+                    continue
+                
+                # 解析 key 获取任务名
+                parts = key.replace(cls._metrics_key_prefix, "").split(":")
+                if len(parts) >= 2:
+                    t_name = parts[0]
+                else:
+                    t_name = "unknown"
+                
+                task_total = int(data.get(b"total", 0))
+                task_success = int(data.get(b"success", 0))
+                task_failed = int(data.get(b"failed", 0))
+                task_duration = int(data.get(b"duration_total_ms", 0))
+                
+                total_tasks += task_total
+                success_tasks += task_success
+                failed_tasks += task_failed
+                total_duration_ms += task_duration
+                
+                # 按任务类型聚合
+                if t_name not in task_breakdown:
+                    task_breakdown[t_name] = {
+                        "total": 0,
+                        "success": 0,
+                        "failed": 0,
+                        "duration_total_ms": 0,
+                    }
+                
+                task_breakdown[t_name]["total"] += task_total
+                task_breakdown[t_name]["success"] += task_success
+                task_breakdown[t_name]["failed"] += task_failed
+                task_breakdown[t_name]["duration_total_ms"] += task_duration
+            
+            # 计算成功率
+            success_rate = (success_tasks / total_tasks * 100) if total_tasks > 0 else 0
+            
+            # 计算平均执行时长
+            avg_duration_ms = (total_duration_ms / total_tasks) if total_tasks > 0 else 0
+            
+            # 计算各任务类型的成功率
+            for t_name, stats in task_breakdown.items():
+                t_total = stats["total"]
+                stats["success_rate"] = (stats["success"] / t_total * 100) if t_total > 0 else 0
+                stats["avg_duration_ms"] = (stats["duration_total_ms"] / t_total) if t_total > 0 else 0
+            
+            return {
+                "period_hours": hours,
+                "total_tasks": total_tasks,
+                "success_tasks": success_tasks,
+                "failed_tasks": failed_tasks,
+                "success_rate_percent": round(success_rate, 2),
+                "avg_duration_ms": round(avg_duration_ms, 2),
+                "total_duration_ms": total_duration_ms,
+                "task_breakdown": task_breakdown,
+            }
+            
+        except Exception as e:
+            _logger.error(f"Failed to get task metrics: {e}")
+            return {
+                "period_hours": hours,
+                "total_tasks": 0,
+                "success_tasks": 0,
+                "failed_tasks": 0,
+                "success_rate_percent": 0,
+                "avg_duration_ms": 0,
+                "total_duration_ms": 0,
+                "task_breakdown": {},
+                "error": str(e),
+            }
     
     @staticmethod
     def get_queue_stats() -> dict[str, Any]:
-        """获取队列统计信息"""
+        """获取队列统计信息（扩展版，包含积压指标）"""
         queues = get_all_queues()
         stats = {}
         
+        total_queued = 0
+        total_started = 0
+        total_failed = 0
+        
         for queue in queues:
+            queued = queue.count
+            started = queue.started_job_registry.count
+            failed = queue.failed_job_registry.count
+            
+            total_queued += queued
+            total_started += started
+            total_failed += failed
+            
+            # 计算积压率
+            active = started
+            backlog_ratio = (queued / (active + 1)) if active >= 0 else queued
+            
             stats[queue.name] = {
-                "queued": queue.count,
+                "queued": queued,
                 "scheduled": queue.scheduled_job_registry.count,
-                "started": queue.started_job_registry.count,
+                "started": started,
                 "finished": queue.finished_job_registry.count,
-                "failed": queue.failed_job_registry.count,
+                "failed": failed,
                 "deferred": queue.deferred_job_registry.count,
+                "backlog_ratio": round(backlog_ratio, 2),
+                "health_status": "healthy" if backlog_ratio < 5 else "backlogged",
             }
+        
+        # 添加总体统计
+        stats["_summary"] = {
+            "total_queued": total_queued,
+            "total_active": total_started,
+            "total_failed": total_failed,
+            "overall_health": "healthy" if total_queued < 1000 else "backlogged",
+        }
         
         return stats
     

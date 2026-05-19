@@ -77,6 +77,13 @@ class ConversationSummary:
     topics: list[str] = field(default_factory=list)           # 主题标签
     importance_score: float = 0.5                             # 重要度评分 (0-1)
     
+    # 质量评估（新增）
+    quality_score: float = 0.0          # 综合质量评分 (0-1)
+    completeness_score: float = 0.0   # 完整性评分
+    accuracy_score: float = 0.0       # 准确性评分（基于置信度）
+    quality_check_passed: bool = False  # 是否通过质量检查
+    quality_issues: list[str] = field(default_factory=list)  # 质量问题列表
+    
     def to_knowledge_content(self) -> str:
         """转换为 Knowledge 内容格式"""
         lines = [
@@ -138,6 +145,9 @@ class ConversationSummary:
             f"- Message Count: {self.message_count}",
             f"- Topics: {', '.join(self.topics) if self.topics else 'N/A'}",
             f"- Importance: {self.importance_score:.2f}",
+            f"- Quality Score: {self.quality_score:.2f}",
+            f"- Completeness: {self.completeness_score:.2f}",
+            f"- Accuracy: {self.accuracy_score:.2f}",
         ])
         
         return "\n".join(lines)
@@ -322,7 +332,107 @@ class ConversationArchiveService:
             referenced_evidence=referenced_evidence,
             topics=topics,
             importance_score=importance_score,
+            # 质量评估字段会通过 _assess_summary_quality 填充
         )
+    
+    def _assess_summary_quality(
+        self,
+        summary: ConversationSummary,
+        messages: list[Message],
+    ) -> ConversationSummary:
+        """
+        评估摘要质量
+        
+        评估维度：
+        1. 完整性 (completeness)：是否涵盖关键信息（问题、事实、结论）
+        2. 准确性 (accuracy)：基于事实置信度
+        
+        Args:
+            summary: 生成的摘要
+            messages: 原始消息列表
+            
+        Returns:
+            更新质量评分的摘要
+        """
+        issues: list[str] = []
+        
+        # 1. 完整性评分 (0-1)
+        completeness_components = []
+        
+        # 检查是否有问题识别（如果消息中有问题）
+        has_questions_in_content = any(
+            "?" in m.content or "？" in m.content for m in messages
+        )
+        if has_questions_in_content:
+            if summary.questions:
+                completeness_components.append(0.3)
+            else:
+                issues.append("Failed to extract questions from conversation")
+                completeness_components.append(0.1)
+        else:
+            completeness_components.append(0.3)  # 没有问题可提取也算完整
+        
+        # 检查是否有关键事实（消息数量与事实数量的比例）
+        expected_facts = max(len(messages) * 0.1, 1)  # 期望至少 10% 的消息产生事实
+        if len(summary.key_facts) >= expected_facts:
+            completeness_components.append(0.4)
+        else:
+            issues.append(f"Insufficient key facts: {len(summary.key_facts)} < {expected_facts:.0f}")
+            completeness_components.append(len(summary.key_facts) / expected_facts * 0.4)
+        
+        # 检查是否有结论（长对话应该有结论）
+        if len(messages) > 10:
+            if summary.conclusions:
+                completeness_components.append(0.3)
+            else:
+                issues.append("Long conversation missing conclusions")
+                completeness_components.append(0.1)
+        else:
+            completeness_components.append(0.3)  # 短对话不需要结论
+        
+        summary.completeness_score = round(sum(completeness_components), 2)
+        
+        # 2. 准确性评分 (0-1)
+        # 基于关键事实的置信度
+        if summary.key_facts:
+            confidence_scores = []
+            for fact in summary.key_facts:
+                conf = fact.get("confidence", "medium")
+                if conf == "high":
+                    confidence_scores.append(1.0)
+                elif conf == "medium":
+                    confidence_scores.append(0.7)
+                else:
+                    confidence_scores.append(0.4)
+            summary.accuracy_score = round(sum(confidence_scores) / len(confidence_scores), 2)
+        else:
+            summary.accuracy_score = 0.5  # 没有事实时默认中等准确性
+        
+        # 3. 综合质量评分 (加权平均)
+        summary.quality_score = round(
+            summary.completeness_score * 0.6 +  # 完整性权重 60%
+            summary.accuracy_score * 0.4,        # 准确性权重 40%
+            2
+        )
+        
+        # 4. 质量检查阈值
+        QUALITY_THRESHOLD = 0.5  # 质量评分阈值
+        COMPLETENESS_THRESHOLD = 0.4
+        
+        summary.quality_check_passed = (
+            summary.quality_score >= QUALITY_THRESHOLD and
+            summary.completeness_score >= COMPLETENESS_THRESHOLD
+        )
+        
+        summary.quality_issues = issues
+        
+        _logger.info(
+            f"Summary quality assessment: score={summary.quality_score}, "
+            f"completeness={summary.completeness_score}, accuracy={summary.accuracy_score}, "
+            f"passed={summary.quality_check_passed}"
+        )
+        
+        return summary
     
     async def archive_conversation(
         self,
@@ -330,7 +440,9 @@ class ConversationArchiveService:
         trigger_type: ArchiveTriggerType = ArchiveTriggerType.MANUAL,
     ) -> ArchiveJobResult:
         """
-        归档对话到 WeKnora
+        归档对话到 WeKnora（支持幂等性）
+        
+        同一对话多次调用时，如果已存在成功的归档作业，直接返回现有结果。
         
         Args:
             conversation_id: 对话 ID
@@ -374,13 +486,69 @@ class ConversationArchiveService:
                         error_message=f"Archive condition not met: {reason}",
                     )
                 
+                # 幂等性检查：检查是否已有成功的归档作业
+                existing_job = session.query(IngestionJob).filter(
+                    IngestionJob.conversation_id == uuid.UUID(conversation_id),
+                    IngestionJob.source_type == "conversation_summary",
+                    IngestionJob.status == IngestionJobStatus.SUCCEEDED,
+                ).first()
+                
+                if existing_job:
+                    _logger.info(f"Conversation {conversation_id} already archived, returning existing knowledge_id={existing_job.kb_id}")
+                    return ArchiveJobResult(
+                        job_id=existing_job.id,
+                        status=ArchiveStatus.COMPLETED,
+                        conversation_id=conversation_id,
+                        knowledge_id=existing_job.kb_id,
+                        trigger_type=actual_trigger,
+                        summary=None,  # 可以查询历史获取，简化处理
+                        error_message=None,
+                    )
+                
                 # 生成摘要
                 summary = await self.generate_summary(conversation, messages)
                 
-                # 创建导入作业记录
+                # 质量评估
+                summary = self._assess_summary_quality(summary, messages)
+                
+                # 质量过滤：低质量摘要不写入 WeKnora
+                if not summary.quality_check_passed:
+                    _logger.warning(
+                        f"Summary quality check failed for conversation {conversation_id}: "
+                        f"score={summary.quality_score}, issues={summary.quality_issues}"
+                    )
+                    
+                    # 记录审计日志（质量不合格）
+                    audit_log(
+                        event="conversation.archive",
+                        outcome="fail",
+                        details={
+                            "job_id": job_id,
+                            "conversation_id": conversation_id,
+                            "trigger_type": actual_trigger.value,
+                            "reason": "quality_check_failed",
+                            "quality_score": summary.quality_score,
+                            "completeness_score": summary.completeness_score,
+                            "accuracy_score": summary.accuracy_score,
+                            "quality_issues": summary.quality_issues,
+                        }
+                    )
+                    
+                    return ArchiveJobResult(
+                        job_id=job_id,
+                        status=ArchiveStatus.FAILED,
+                        conversation_id=conversation_id,
+                        knowledge_id=None,
+                        trigger_type=actual_trigger,
+                        summary=summary,
+                        error_message=f"Quality check failed: {summary.quality_issues}",
+                    )
+                
+                # 创建导入作业记录（包含 conversation_id 用于幂等性）
                 ingestion_job = IngestionJob(
                     id=uuid.UUID(job_id),
                     kb_id=None,  # 由 WeKnora 响应填充
+                    conversation_id=uuid.UUID(conversation_id),  # 用于幂等性检查
                     source_type="conversation_summary",
                     status=IngestionJobStatus.RUNNING,
                     total_items=1,
@@ -450,6 +618,9 @@ class ConversationArchiveService:
                     "trigger_type": actual_trigger.value,
                     "message_count": summary.message_count,
                     "importance_score": summary.importance_score,
+                    "quality_score": summary.quality_score,
+                    "completeness_score": summary.completeness_score,
+                    "accuracy_score": summary.accuracy_score,
                 }
             )
             
@@ -525,7 +696,7 @@ class ConversationArchiveService:
 archive_service = ConversationArchiveService()
 
 
-@task_wrapper(max_retries=3, timeout=600)  # 10 分钟超时
+@task_wrapper(max_retries=3, timeout=120)  # 120s timeout per spec
 def archive_conversation_task(
     conversation_id: str,
     trigger_type: str = "manual",
@@ -578,7 +749,7 @@ def enqueue_conversation_archive(
         queue_name=QUEUE_ARCHIVE,
         priority=TaskPriority.HIGH,
         job_id=job_id,
-        timeout=600,  # 10 分钟
+        timeout=120,  # 2 分钟
         max_retries=3,
         retry_intervals=[30, 120, 300],  # 30秒、2分钟、5分钟
     )

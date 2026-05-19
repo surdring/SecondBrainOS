@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     rerank_model_id: str = Field("", alias="RERANK_MODEL_ID")
     rerank_timeout_ms: int = Field(150, alias="RERANK_TIMEOUT_MS")
     rerank_weight: float = Field(0.5, alias="RERANK_WEIGHT")
-    rerank_max_candidates: int = Field(20, alias="RERANK_MAX_CANDIDATES")
+    rerank_max_concurrent: int = Field(5, alias="RERANK_MAX_CONCURRENT")
 
     @model_validator(mode="before")
     @classmethod

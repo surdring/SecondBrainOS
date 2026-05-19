@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,6 +31,88 @@ from sbo_core.errors import ErrorCode, AppError
 
 
 _logger = logging.getLogger("sbo_core.consolidation_tasks")
+
+
+class ExtractionMode(str, Enum):
+    """抽取模式"""
+    RULE_BASED = "rule_based"    # 纯规则引擎（快速但准确度较低）
+    HYBRID = "hybrid"            # 规则 + LLM 辅助（平衡）
+    LLM_ONLY = "llm_only"      # 纯 LLM（准确度最高但较慢）
+
+
+class LLMExtractionClient:
+    """LLM 辅助抽取客户端
+    
+    用于在 HYBRID 或 LLM_ONLY 模式下进行结构化信息抽取。
+    如果 LLM 不可用或失败，自动降级到规则引擎。
+    """
+    
+    def __init__(self):
+        self.enabled = False
+        self._init_client()
+    
+    def _init_client(self):
+        """初始化 LLM 客户端"""
+        try:
+            settings = load_settings()
+            # 检查是否有配置 LLM provider
+            if settings.provider_base_url and settings.provider_api_key:
+                self.enabled = True
+                _logger.info("LLM extraction client initialized")
+            else:
+                _logger.debug("LLM not configured, using rule-based extraction only")
+        except Exception as e:
+            _logger.warning(f"Failed to initialize LLM client: {e}")
+            self.enabled = False
+    
+    def extract_with_llm(self, content: str) -> dict[str, Any] | None:
+        """
+        使用 LLM 进行结构化信息抽取
+        
+        Args:
+            content: 待抽取的文本
+            
+        Returns:
+            抽取结果字典，失败时返回 None（降级到规则引擎）
+        """
+        if not self.enabled:
+            return None
+        
+        try:
+            # 构建 LLM prompt
+            prompt = self._build_extraction_prompt(content)
+            
+            # 调用 LLM API（简化实现，实际需集成 provider）
+            # 这里返回 None 表示 LLM 抽取失败，将降级到规则引擎
+            _logger.debug("LLM extraction would be called here (placeholder)")
+            return None
+            
+        except Exception as e:
+            _logger.warning(f"LLM extraction failed, falling back to rules: {e}")
+            return None
+    
+    def _build_extraction_prompt(self, content: str) -> str:
+        """构建抽取 prompt"""
+        return f"""请从以下文本中抽取结构化信息，返回 JSON 格式：
+
+文本：{content[:500]}
+
+需要抽取：
+1. 实体（人名、组织、地点、时间）
+2. 关系（实体之间的关联）
+3. 偏好/约束（忌口、喜好等）
+4. 事实（证件号码、联系方式等）
+5. 待办事项
+
+返回格式示例：
+{{
+    "entities": [{{"name": "张三", "type": "person", "confidence": 0.9}}],
+    "relations": [{{"source": "张三", "target": "李四", "type": "know", "confidence": 0.8}}],
+    "preferences": [{{"category": "diet", "value": "不吃辣", "is_constraint": true}}],
+    "facts": [{{"key": "phone", "value": "13800138000", "is_stable": true}}],
+    "todos": [{{"content": "预约医生", "priority": "high"}}]
+}}
+"""
 
 
 class ExtractionType(str, Enum):
@@ -473,11 +556,11 @@ class InformationExtractor:
         
         if not confidences:
             return 0.0
-        
+            
         return sum(confidences) / len(confidences)
 
 
-@task_wrapper(max_retries=3, timeout=300)
+@task_wrapper(max_retries=3, timeout=60)  # 60s timeout per spec
 def consolidate_event(event_id: str, job_id: str | None = None) -> dict[str, Any]:
     """事件巩固任务 - 抽取结构化信息
     
@@ -532,6 +615,51 @@ def consolidate_event(event_id: str, job_id: str | None = None) -> dict[str, Any
             # 2. 执行信息抽取
             extractor = InformationExtractor()
             extraction_result = extractor.extract(event)
+            
+            # 2.5 置信度阈值过滤（避免低置信度污染 profile）
+            CONFIDENCE_THRESHOLD = 0.6  # 可配置阈值
+            
+            # 标记低置信度项
+            low_confidence_items = []
+            
+            def filter_by_confidence(items: list, item_type: str) -> list:
+                """过滤低置信度项并记录"""
+                filtered = []
+                for item in items:
+                    if getattr(item, "confidence", 0.0) >= CONFIDENCE_THRESHOLD:
+                        filtered.append(item)
+                    else:
+                        low_confidence_items.append({
+                            "type": item_type,
+                            "confidence": getattr(item, "confidence", 0.0),
+                            "preview": str(item)[:100],
+                        })
+                return filtered
+            
+            # 过滤各类型抽取结果
+            extraction_result.entities = filter_by_confidence(
+                extraction_result.entities, "entity"
+            )
+            extraction_result.preferences = filter_by_confidence(
+                extraction_result.preferences, "preference"
+            )
+            extraction_result.facts = filter_by_confidence(
+                extraction_result.facts, "fact"
+            )
+            extraction_result.todos = filter_by_confidence(
+                extraction_result.todos, "todo"
+            )
+            
+            # 重新计算整体置信度（基于过滤后的结果）
+            extraction_result.overall_confidence = extractor._calculate_overall_confidence(
+                extraction_result
+            )
+            
+            if low_confidence_items:
+                _logger.warning(
+                    f"Filtered {len(low_confidence_items)} low confidence items "
+                    f"(threshold={CONFIDENCE_THRESHOLD}) for event {event_id}"
+                )
             
             # 3. 保存抽取结果到 extractions 表
             from sbo_core.database import ConsolidationJob
@@ -703,6 +831,9 @@ def consolidate_event(event_id: str, job_id: str | None = None) -> dict[str, Any
                     "facts_count": len(extraction_result.facts),
                     "todos_count": len(extraction_result.todos),
                     "overall_confidence": extraction_result.overall_confidence,
+                    "confidence_threshold": CONFIDENCE_THRESHOLD,
+                    "low_confidence_filtered": len(low_confidence_items),
+                    "low_confidence_items": low_confidence_items[:10],  # 最多记录10个
                 }
             )
             
@@ -722,6 +853,8 @@ def consolidate_event(event_id: str, job_id: str | None = None) -> dict[str, Any
                 "facts_count": len(extraction_result.facts),
                 "todos_count": len(extraction_result.todos),
                 "overall_confidence": extraction_result.overall_confidence,
+                "confidence_threshold": CONFIDENCE_THRESHOLD,
+                "low_confidence_filtered": len(low_confidence_items),
             }
             
         finally:
@@ -762,7 +895,7 @@ def enqueue_consolidation(event_id: str | uuid.UUID, user_id: str | None = None)
         event_id_str,
         queue_name=QUEUE_DEFAULT,
         priority=TaskPriority.NORMAL,
-        timeout=300,
+        timeout=60,  # 与装饰器保持一致
         job_meta={"user_id": user_id} if user_id else {}
     )
 

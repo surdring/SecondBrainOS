@@ -31,6 +31,223 @@ from sbo_core.errors import ErrorCode, AppError
 _logger = logging.getLogger("sbo_core.profile_tasks")
 
 
+class PendingProfileChangeStatus(str, Enum):
+    """待确认档案变更状态"""
+    PENDING = "pending"      # 等待用户确认
+    APPROVED = "approved"    # 用户已确认
+    REJECTED = "rejected"  # 用户已拒绝
+    EXPIRED = "expired"      # 超时过期
+
+
+@dataclass
+class PendingProfileChange:
+    """待确认档案变更"""
+    change_id: str
+    user_id: str
+    field_type: str
+    field_key: str
+    old_value: Any
+    new_value: Any
+    confidence: float
+    requires_confirmation: bool  # 是否需要用户确认
+    source_extraction_id: str
+    created_at: datetime
+    status: PendingProfileChangeStatus = PendingProfileChangeStatus.PENDING
+    resolved_at: datetime | None = None
+    resolution_reason: str | None = None
+
+
+class ProfileChangeManager:
+    """档案变更管理器 - 处理用户确认机制"""
+    
+    def __init__(self):
+        self.high_risk_fields = [
+            "id_card", "passport", "birth_date", "name", "nationality"
+        ]
+        self.high_confidence_threshold = 0.9
+    
+    def requires_user_confirmation(
+        self,
+        field_type: str,
+        field_key: str,
+        old_value: Any,
+        new_value: Any,
+        confidence: float,
+        is_stable: bool = False,
+    ) -> bool:
+        """
+        判断变更是否需要用户确认
+        
+        需要确认的场景：
+        1. 稳定事实字段变更（如身份证号）
+        2. 高置信度冲突（旧值和新值都高置信度但不同）
+        3. 约束/禁忌类字段变更
+        
+        Returns:
+            True 如果需要用户确认
+        """
+        # 稳定事实字段变更需要确认
+        if is_stable and old_value is not None:
+            return True
+        
+        # 约束/禁忌类字段需要确认
+        if field_type == "constraints":
+            return True
+        
+        # 高置信度冲突需要确认
+        if old_value is not None and confidence >= self.high_confidence_threshold:
+            return True
+        
+        # 高风险字段需要确认
+        if field_key in self.high_risk_fields and old_value is not None:
+            return True
+        
+        return False
+    
+    def create_pending_change(
+        self,
+        session,
+        user_id: str,
+        field_type: str,
+        field_key: str,
+        old_value: Any,
+        new_value: Any,
+        confidence: float,
+        source_extraction_id: str,
+        is_stable: bool = False,
+    ) -> PendingProfileChange | None:
+        """
+        创建待确认变更记录
+        
+        如果不需要确认，返回 None。
+        
+        Returns:
+            PendingProfileChange 或 None
+        """
+        if not self.requires_user_confirmation(
+            field_type, field_key, old_value, new_value, confidence, is_stable
+        ):
+            return None
+        
+        change_id = str(uuid.uuid4())
+        
+        from sqlalchemy import text
+        
+        session.execute(
+            text("""
+                INSERT INTO pending_profile_changes (
+                    change_id, user_id, field_type, field_key,
+                    old_value, new_value, confidence, source_extraction_id,
+                    status, created_at
+                ) VALUES (
+                    :change_id, :user_id, :field_type, :field_key,
+                    :old_value, :new_value, :confidence, :source_extraction_id,
+                    :status, NOW()
+                )
+            """),
+            {
+                "change_id": change_id,
+                "user_id": user_id,
+                "field_type": field_type,
+                "field_key": field_key,
+                "old_value": old_value,
+                "new_value": new_value,
+                "confidence": confidence,
+                "source_extraction_id": uuid.UUID(source_extraction_id),
+                "status": PendingProfileChangeStatus.PENDING.value,
+            }
+        )
+        
+        return PendingProfileChange(
+            change_id=change_id,
+            user_id=user_id,
+            field_type=field_type,
+            field_key=field_key,
+            old_value=old_value,
+            new_value=new_value,
+            confidence=confidence,
+            requires_confirmation=True,
+            source_extraction_id=source_extraction_id,
+            created_at=datetime.now(timezone.utc),
+        )
+    
+    def get_pending_changes(
+        self,
+        session,
+        user_id: str,
+        limit: int = 50,
+    ) -> list[PendingProfileChange]:
+        """获取用户的待确认变更列表"""
+        from sqlalchemy import text
+        
+        result = session.execute(
+            text("""
+                SELECT change_id, field_type, field_key, old_value, new_value,
+                       confidence, source_extraction_id, created_at
+                FROM pending_profile_changes
+                WHERE user_id = :user_id AND status = :status
+                ORDER BY created_at DESC
+                LIMIT :limit
+            """),
+            {
+                "user_id": user_id,
+                "status": PendingProfileChangeStatus.PENDING.value,
+                "limit": limit,
+            }
+        )
+        
+        changes = []
+        for row in result:
+            changes.append(PendingProfileChange(
+                change_id=str(row[0]),
+                user_id=user_id,
+                field_type=row[1],
+                field_key=row[2],
+                old_value=row[3],
+                new_value=row[4],
+                confidence=row[5],
+                requires_confirmation=True,
+                source_extraction_id=str(row[6]) if row[6] else None,
+                created_at=row[7],
+            ))
+        
+        return changes
+    
+    def resolve_pending_change(
+        self,
+        session,
+        change_id: str,
+        approved: bool,
+        reason: str | None = None,
+    ) -> bool:
+        """解决（确认/拒绝）待确认的变更"""
+        from sqlalchemy import text
+        
+        status = (
+            PendingProfileChangeStatus.APPROVED
+            if approved else PendingProfileChangeStatus.REJECTED
+        )
+        
+        result = session.execute(
+            text("""
+                UPDATE pending_profile_changes
+                SET status = :status,
+                    resolved_at = NOW(),
+                    resolution_reason = :reason
+                WHERE change_id = :change_id AND status = :pending_status
+                RETURNING change_id
+            """),
+            {
+                "change_id": uuid.UUID(change_id),
+                "status": status.value,
+                "pending_status": PendingProfileChangeStatus.PENDING.value,
+                "reason": reason,
+            }
+        )
+        
+        return result.scalar() is not None
+
+
 class ConflictResolutionStrategy(str, Enum):
     """冲突解决策略"""
     OVERWRITE = "overwrite"           # 直接覆写
@@ -545,8 +762,25 @@ def upsert_profile(
                             extraction_id
                         )
             
-            # 4. 保存更新后的档案
+            # 4. 保存更新后的档案（使用乐观锁防止并发冲突）
             new_version = current_profile["version"] + 1
+            expected_version = current_profile["version"]
+            
+            # 使用乐观锁：检查 version 是否未改变
+            lock_result = session.execute(
+                text("""
+                    SELECT version FROM user_profiles WHERE user_id = :user_id FOR UPDATE NOWAIT
+                """),
+                {"user_id": target_user_id}
+            ).first()
+            
+            if lock_result and lock_result[0] != expected_version:
+                # 版本已改变，存在并发冲突
+                raise AppError(
+                    code=ErrorCode.CONFLICT_ERROR,
+                    message=f"Concurrent update detected for user {target_user_id}: expected version {expected_version}, found {lock_result[0]}",
+                    status_code=409
+                )
             
             session.execute(
                 text("""

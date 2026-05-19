@@ -158,6 +158,27 @@ class EraseJob(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class Embedding(Base):
+    """向量嵌入表 - 存储事件的向量表示"""
+    __tablename__ = "embeddings"
+    
+    id = Column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(PostgresUUID(as_uuid=True), nullable=False, index=True, unique=True)
+    # 使用 pgvector 的 vector 类型，在迁移脚本中定义
+    embedding = Column(JSON, nullable=True)  # 存储为 JSON 数组，实际使用 pgvector 时通过 raw SQL 操作
+    model_name = Column(String(100), nullable=False)  # 使用的嵌入模型名称
+    dimensions = Column(Integer, nullable=False)  # 向量维度
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # 重跑审计字段
+    rerun_count = Column(Integer, default=0)  # 重跑次数
+    last_rerun_at = Column(DateTime(timezone=True), nullable=True)  # 最后重跑时间
+    error_message = Column(Text, nullable=True)  # 上次失败原因
+    error_type = Column(String(50), nullable=True)  # 错误类型: timeout, rate_limited, auth_failed, invalid_input
+    retry_priority = Column(String(20), nullable=True)  # 重试优先级: high, medium, low
+
+
 class FileMetadata(Base):
     """文件元数据表"""
     __tablename__ = "file_metadata"
